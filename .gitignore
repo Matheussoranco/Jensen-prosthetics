@@ -1,0 +1,60 @@
+# CAD(circuit)
+## KiCAD
+*.000
+*.bak
+*.bck
+*.kicad_pcb-bak
+*~
+_autosave-*
+*.tmp
+*.net
+*.dsn
+*.ses
+*.xml
+*.csv
+## Eagle
+*.s#?
+*.b#?
+*.l#?
+eagle.epf
+*.pro
+*.job
+*.$$$
+*.cmp
+*.ly2
+*.l15
+*.sol
+*.plc
+*.stc
+*.sts
+*.crc
+*.crs
+*.dri
+*.drl
+*.gpi
+*.pls
+*.drd
+*.drd.*
+*.info
+*.eps
+*.lck
+
+# OS
+## Windows
+/**/desktop.ini
+/**/Thumbs.db
+## Mac
+/**/.DS_Store
+
+# Native SolidWorks source (proprietary, compressed/encrypted container —
+# cannot be reliably scrubbed of embedded authoring metadata with available
+# open tooling; open STEP/STL exports under hardware/ are the public
+# deliverables). Kept locally only.
+/prosthetic_hand_Jensen_1/
+*.SLDPRT
+*.SLDASM
+*.slddrw
+
+# Working drafts, not part of the technical release
+jensen_hand_social_posts.md
+
