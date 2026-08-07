@@ -36,6 +36,46 @@ no attribution is legally required for their inclusion, but credit goes
 to the respective GrabCAD community contributors who originally modeled
 them.
 
+## Firmware — relationship to exiii's HACKberry
+
+The firmware under `firmware/` was written after reading the published
+HACKberry Arduino sketches, and the control approach it uses — condition a
+myoelectric signal, convert it to a speed, integrate that speed into a hand
+position — comes from that work.
+
+**No HACKberry source code is present in this repository.** exiii releases the
+HACKberry Arduino sketch under the **GNU General Public License version 3**
+(their 3D and circuit data is separately under CC BY-NC-SA 4.0). The firmware
+here is an independent implementation written from scratch for different
+hardware — ESP32 + PCA9685 rather than ATmega32u4 with direct servo pins,
+seven actuated digits rather than three, closed-loop grip force rather than
+open loop, and a different architecture throughout — so no GPL-licensed code
+is copied, adapted, or linked, and no GPL obligation attaches to this
+repository.
+
+Several comments in `firmware/lib/jensen_core/` and a section of
+`firmware/README.md` describe HACKberry's published control behaviour by way
+of comparison, including one specific defect in its speed mapping. Those
+references are engineering commentary on publicly documented behaviour, not
+reproduced code.
+
+- HACKberry project and Open Source Project Policy:
+  <https://www.exiii-hackberry.com/> · <https://github.com/mission-arm/HACKberry>
+
+## Firmware — third-party libraries
+
+The firmware depends on one external Arduino library, resolved at build time
+by PlatformIO and **not** vendored into this repository:
+
+- **Adafruit PWM Servo Driver Library** — BSD licensed, © Adafruit Industries.
+  <https://github.com/adafruit/Adafruit-PWM-Servo-Driver-Library>
+
+The declaration-only headers under `firmware/test/hostcheck/stubs/` mirror the
+*signatures* of the Arduino core, `Wire`, `Preferences`, `esp_task_wdt` and the
+Adafruit driver so the application sources can be type-checked without the
+Xtensa toolchain. They contain no implementation and are not derived from
+those projects' source.
+
 ## Design inspiration
 
 This project's mechanical and control approach was informed by, and owes a
