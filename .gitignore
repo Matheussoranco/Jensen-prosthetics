@@ -58,3 +58,25 @@ eagle.epf
 # Working drafts, not part of the technical release
 jensen_hand_social_posts.md
 
+# Firmware build artifacts
+## PlatformIO
+/firmware/.pio/
+/firmware/.pioenvs/
+/firmware/.piolibdeps/
+/firmware/.clang_complete
+/firmware/.gcc-flags.json
+## Arduino IDE / compiler leftovers
+*.o
+*.obj
+*.elf
+*.bin.bak
+## Host test builds
+/firmware/build/
+## Python tooling
+__pycache__/
+*.pyc
+
+# Editor
+.vscode/
+.idea/
+

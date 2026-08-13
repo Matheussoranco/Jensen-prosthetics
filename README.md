@@ -19,8 +19,11 @@ PCA9685 PWM expander, an ESP32 microcontroller, FSR-based grip force
 sensing, and a Nextion touch display for status/configuration, powered from
 a 2S Li-ion pack through a buck-regulated supply. This repository releases
 the complete mechanical design (STEP/STL) of the hand and forearm shell
-under an open, non-commercial license, along with the reference component
-models used to validate fit and clearance during development.
+under an open, non-commercial license, the reference component models used
+to validate fit and clearance during development, and the ESP32 control
+firmware: myoelectric proportional control over a seven-pattern grasp
+library, closed-loop grip-force regulation with slip response, and a guided
+calibration procedure.
 
 ## 1. Introduction and Motivation
 
@@ -38,11 +41,10 @@ design, informed by the design conventions established in that body of
 work and in the broader anthropomorphic-hand literature [1], and released
 so that it can be reproduced, studied, and modified by others.
 
-This repository is a **hardware and mechanical-design release**. It
-contains the CAD, exported interchange geometry, and bill of materials for
-the hand and forearm assembly. Firmware/control software for the ESP32 and
-PCA9685 stack is under active development and is intentionally out of
-scope for this release; see [Section 9, Future Work](#9-future-work).
+This repository contains the CAD and exported interchange geometry for the
+hand and forearm assembly, the bill of materials, and the ESP32 control
+firmware under [`firmware/`](firmware/) — see
+[Section 6.1](#61-firmware) and [`firmware/README.md`](firmware/README.md).
 
 ## 2. Related Work
 
@@ -139,8 +141,38 @@ comparable open hand-control stacks.
 - **Feedback / HMI:** Nextion 2.4" touch display for status and
   configuration; a vibration motor for haptic feedback; a status LED and a
   momentary push button for local mode control.
-- **Firmware:** not yet included in this repository — see
-  [Future Work](#9-future-work).
+
+### 6.1 Firmware
+
+The control stack lives in [`firmware/`](firmware/) and is documented in
+detail in [`firmware/README.md`](firmware/README.md). In outline:
+
+A single scalar **aperture** command (0 = open, 1 = closed) drives the hand.
+Two surface-EMG electrodes produce it — the flexor closes, the extensor
+opens — with activation integrated into aperture over time, so holding a
+contraction keeps closing and relaxing holds position. Which digits move for
+a given aperture, and how far, is what distinguishes one grasp pattern from
+another: in a power grasp all four fingers sweep the full range; in a key
+grip they stay curled and only the thumb moves; when pointing, the index
+never leaves full extension. Seven patterns ship, and contracting both
+electrodes together ("co-contraction") cycles them without reaching for the
+button.
+
+Fingertip FSRs close a second loop around that. Once the grip reaches its
+force target the hand stops closing rather than stalling its servos against
+an object it cannot crush, and a sudden drop in fingertip force — an object
+starting to slip — makes it tighten a step. The force setpoint is scaled per
+pattern, because the setpoint that is comfortable wrapped around a bottle
+will crush an egg held between two fingertips.
+
+Architecturally the firmware is split so that the entire control policy —
+drive law, force loop, mode transitions, calibration sequencing — lives in
+`firmware/lib/jensen_core/`, which contains no Arduino code and compiles on
+any host. That is what allows the behaviour of the prosthesis to be
+exercised against synthetic inputs in an 89-case test suite without a hand
+attached; `firmware/src/` only samples ADCs and writes servo pulses. The
+velocity-integration approach is the one idea taken from exiii's HACKberry
+[3]; no HACKberry code is used (see [`NOTICE.md`](NOTICE.md)).
 
 ## 7. Repository Structure
 
@@ -149,6 +181,13 @@ Jensen-prosthetics/
 ├── README.md
 ├── LICENSE                 CC BY-NC-SA 4.0
 ├── NOTICE.md                third-party attributions (read before reuse)
+├── firmware/                ESP32 control stack — see firmware/README.md
+│   ├── platformio.ini
+│   ├── src/                 ESP32 application (peripherals only)
+│   ├── lib/jensen_core/     control policy — no Arduino, host-testable
+│   ├── test/native/         89 host tests for the control core
+│   ├── tools/               test runner, syntax check, telemetry monitor
+│   └── docs/                Nextion HMI component specification
 ├── hardware/
 │   ├── assembly/
 │   │   └── Jensen_Hand_Assembly.step   full hand assembly, open STEP
@@ -200,8 +239,14 @@ Full third-party attributions are in [`NOTICE.md`](NOTICE.md). In summary:
 
 ## 9. Future Work
 
-- Firmware for the ESP32/PCA9685 control stack (servo trajectory control,
-  FSR-based grip force closed loop, Nextion UI).
+- **Bench validation of the firmware.** The control core is covered by an
+  89-case host test suite, but the ESP32 build has not yet been run against
+  physical hardware; servo endpoints, the FSR force fit, and the battery
+  divider ratio all need measuring on a real build.
+- Motor current sensing, so a stalled servo can be detected directly rather
+  than inferred from fingertip load and elapsed time.
+- Pattern-recognition control across more than two electrode sites, to
+  replace co-contraction as the grip-change gesture.
 - Independent verification and release of native SolidWorks source once
   personal metadata can be conclusively stripped or the files are
   re-authored in a clean template.
