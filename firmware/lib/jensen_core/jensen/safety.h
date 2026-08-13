@@ -26,6 +26,7 @@ enum FaultFlag : uint16_t {
     kFaultSustainedLoad = 1u << 6,   ///< held at high force long enough to cook a servo
     kFaultLoopOverrun = 1u << 7,     ///< control loop missed its deadline
     kFaultSensorRange = 1u << 8,     ///< an input sat at rail — open or shorted
+    kFaultMotorStall = 1u << 9,      ///< directly measured servo stall current
 };
 
 struct BatteryConfig {

@@ -10,10 +10,12 @@
 #include <cstddef>
 #include <cstdint>
 
+#include "jensen/current.h"
 #include "jensen/digit.h"
 #include "jensen/emg.h"
 #include "jensen/force.h"
 #include "jensen/grip.h"
+#include "jensen/pattern.h"
 #include "jensen/safety.h"
 
 namespace jensen {
@@ -27,7 +29,7 @@ uint32_t crc32(const void* data, size_t length);
 
 struct HandConfig {
     static constexpr uint32_t kMagic = 0x4A454E53u;  // 'JENS'
-    static constexpr uint16_t kVersion = 1;
+    static constexpr uint16_t kVersion = 2;
 
     uint32_t magic = kMagic;
     uint16_t version = kVersion;
@@ -44,6 +46,8 @@ struct HandConfig {
     DriveConfig drive{};
     EmgCalibration emgFlexor{};
     EmgCalibration emgExtensor{};
+    EmgCalibration emgAux[kPatternSiteCount - 2]{};
+    PatternConfig pattern{};
 
     // --- Force sensing -------------------------------------------------------
     ForceSensorConfig forceSensor{};
@@ -53,6 +57,7 @@ struct HandConfig {
     // --- Supervision ---------------------------------------------------------
     BatteryConfig battery{};
     HoldGuardConfig holdGuard{};
+    MotorCurrentConfig motorCurrent{};
 
     // --- Preferences ---------------------------------------------------------
     uint16_t enabledGrips = 0;

@@ -47,6 +47,7 @@ FAULT_BITS = [
     (0x0040, "sustained_load"),
     (0x0080, "loop_overrun"),
     (0x0100, "sensor_range"),
+    (0x0200, "motor_stall"),
 ]
 
 
@@ -105,6 +106,7 @@ def render(record: dict[str, Any]) -> str:
         "",
         f"  emg flex [{bar(float(get('ef', 0.0)))}] {float(get('ef', 0.0)):5.3f}",
         f"  emg ext  [{bar(float(get('ee', 0.0)))}] {float(get('ee', 0.0)):5.3f}",
+        "  sites    " + "  ".join(f"{i}:{float(get(f's{i}', 0.0)):4.2f}" for i in range(4)),
         "",
     ]
 
@@ -127,6 +129,13 @@ def render(record: dict[str, Any]) -> str:
         f"{name}:{int(float(get(f'p{i}', 0.0))):4d}" for i, name in enumerate(DIGITS)
     )
     lines.append(pulses)
+    currents = "    " + "  ".join(
+        f"{name}:{float(get(f'i{i}', 0.0)):4.2f}A" for i, name in enumerate(DIGITS)
+        if float(get(f'i{i}', 0.0)) > 0.0 or (int(float(get('stall', 0.0))) & (1 << i))
+    )
+    if currents.strip():
+        lines.append("  motor current")
+        lines.append(currents)
     lines.append("")
 
     charge = float(get("soc", 0.0))

@@ -59,6 +59,10 @@ void sampleInputs() {
         static_cast<float>(analog::readCounts(board::kPinEmgFlexor, board::kAdcOversample));
     g_inputs.emgExtensorCounts =
         static_cast<float>(analog::readCounts(board::kPinEmgExtensor, board::kAdcOversample));
+    for (uint8_t i = 0; i < kPatternSiteCount - 2; ++i) {
+        g_inputs.emgAuxCounts[i] =
+            static_cast<float>(analog::readCounts(board::kPinEmgAux[i], board::kAdcOversample));
+    }
 
     for (uint8_t i = 0; i < kGraspDigitCount; ++i) {
         g_inputs.fsrCounts[i] =
@@ -69,6 +73,12 @@ void sampleInputs() {
 
     g_inputs.batteryVolts = analog::readBatteryVolts(
         board::kPinBatterySense, board::kBatteryDividerRatio, board::kAdcOversample);
+
+    for (uint8_t i = 0; i < kDigitCount; ++i) {
+        g_inputs.motorCurrentAmps[i] = analog::readCurrentAmps(
+            board::kPinMotorCurrent[i], board::kMotorCurrentZeroVolts[i],
+            board::kMotorCurrentVoltsPerAmp[i], board::kAdcOversample);
+    }
 
     g_inputs.servoBusOk = g_servos.healthy();
 }

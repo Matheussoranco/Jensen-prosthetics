@@ -169,6 +169,7 @@ const char* faultName(FaultFlag flag) {
         case kFaultSustainedLoad:    return "sustained_load";
         case kFaultLoopOverrun:      return "loop_overrun";
         case kFaultSensorRange:      return "sensor_range";
+        case kFaultMotorStall:       return "motor_stall";
         case kFaultNone:             return "none";
         default:                     return "unknown";
     }
@@ -179,7 +180,8 @@ const char* SafetySupervisor::worstFaultName() const {
     constexpr FaultFlag kOrder[] = {
         kFaultBatteryCritical, kFaultServoBus,       kFaultDigitCalibration,
         kFaultEmgCalibration,  kFaultOverForce,      kFaultSustainedLoad,
-        kFaultBatteryLow,      kFaultSensorRange,    kFaultLoopOverrun,
+        kFaultMotorStall,      kFaultBatteryLow,      kFaultSensorRange,
+        kFaultLoopOverrun,
     };
     for (FaultFlag flag : kOrder) {
         if (isSet(flag)) return faultName(flag);

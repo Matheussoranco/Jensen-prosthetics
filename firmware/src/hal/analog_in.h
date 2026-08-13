@@ -29,5 +29,9 @@ uint32_t readMillivolts(int pin, uint8_t samples);
 /// Pack voltage, corrected for the sense divider.
 float readBatteryVolts(int pin, float dividerRatio, uint8_t samples);
 
+/// Current transducer result in amperes. `zeroVolts` is its zero-current
+/// output and `voltsPerAmp` is the fitted sensor's sensitivity.
+float readCurrentAmps(int pin, float zeroVolts, float voltsPerAmp, uint8_t samples);
+
 }  // namespace analog
 }  // namespace jensen

@@ -93,6 +93,8 @@ HandConfig HandConfig::defaults(HandSide side) {
     cfg.drive = DriveConfig{};
     cfg.emgFlexor = EmgCalibration{};
     cfg.emgExtensor = EmgCalibration{};
+    for (EmgCalibration& calibration : cfg.emgAux) calibration = EmgCalibration{};
+    cfg.pattern = PatternConfig{};
 
     cfg.forceSensor = ForceSensorConfig{};
     cfg.gripForce = GripForceConfig{};
@@ -107,6 +109,7 @@ HandConfig HandConfig::defaults(HandSide side) {
 
     cfg.battery = BatteryConfig{};
     cfg.holdGuard = HoldGuardConfig{};
+    cfg.motorCurrent = MotorCurrentConfig{};
 
     cfg.enabledGrips = gripBit(GripId::Rest) | gripBit(GripId::Power) | gripBit(GripId::Pinch) |
                        gripBit(GripId::Tripod) | gripBit(GripId::LateralKey);
@@ -140,6 +143,22 @@ bool HandConfig::isValid() const {
         if (digits[i].enabled && !digits[i].isValid()) return false;
     }
     if (idleTimeoutSeconds < 0.0f || idleTimeoutSeconds > 3600.0f) return false;
+    if (motorCurrent.tripAmps <= 0.0f || motorCurrent.tripAmps > 20.0f) return false;
+    if (motorCurrent.clearAmps < 0.0f || motorCurrent.clearAmps > motorCurrent.tripAmps) return false;
+    if (motorCurrent.tripSeconds <= 0.0f || motorCurrent.tripSeconds > 10.0f) return false;
+    if (motorCurrent.clearSeconds < 0.0f || motorCurrent.clearSeconds > 60.0f) return false;
+    if ((motorCurrent.presentMask & static_cast<uint8_t>(~((1u << kDigitCount) - 1u))) != 0) return false;
+    if (pattern.siteCount < 3 || pattern.siteCount > kPatternSiteCount) return false;
+    if (pattern.signalThreshold <= 0.0f || pattern.signalThreshold > 1.0f) return false;
+    if (pattern.releaseThreshold < 0.0f || pattern.releaseThreshold > pattern.signalThreshold) return false;
+    if (pattern.maximumDistance <= 0.0f || pattern.maximumDistance > 2.0f) return false;
+    if (pattern.ambiguityMargin < 0.0f || pattern.ambiguityMargin > 2.0f) return false;
+    if (pattern.holdSeconds < 0.0f || pattern.holdSeconds > 5.0f) return false;
+    if (pattern.enabled) {
+        for (uint8_t i = 0; i < pattern.siteCount - 2; ++i) {
+            if (!emgAux[i].isUsable()) return false;
+        }
+    }
     return true;
 }
 

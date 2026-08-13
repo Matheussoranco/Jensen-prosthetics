@@ -190,6 +190,62 @@ void SerialCli::handleLine(char* line) {
         }
         out_->printf("grip %s\r\n", GripLibrary::name(hand_->grip()));
 
+    } else if (equals(command, "pattern")) {
+        if (count < 2 || equals(tokens[1], "status")) {
+            const PatternRecognizer& recognizer = hand_->patternRecognizer();
+            out_->printf("pattern %s, %u sites, candidate %s, confidence %.2f%s\r\n",
+                         working_.pattern.enabled ? "on" : "off",
+                         static_cast<unsigned>(working_.pattern.siteCount),
+                         GripLibrary::name(recognizer.candidate()),
+                         static_cast<double>(recognizer.confidence()),
+                         recognizer.training() ? ", TRAINING" : "");
+        } else if (equals(tokens[1], "enable") && count >= 3) {
+            bool enabled = false;
+            if (!parseBool(tokens[2], enabled)) {
+                out_->println(F("usage: pattern enable on|off"));
+                return;
+            }
+            working_.pattern.enabled = enabled;
+            commitConfig("pattern recognition");
+        } else if (equals(tokens[1], "site") && count >= 6) {
+            const int site = std::atoi(tokens[2]);
+            if (site < 2 || site >= kPatternSiteCount) {
+                out_->println(F("site must be 2 or 3 (0/1 are flexor/extensor)"));
+                return;
+            }
+            EmgCalibration calibration{};
+            calibration.baselineCounts = static_cast<float>(std::atof(tokens[3]));
+            calibration.noiseCounts = static_cast<float>(std::atof(tokens[4]));
+            calibration.mvcCounts = static_cast<float>(std::atof(tokens[5]));
+            calibration.valid = true;
+            if (!calibration.isUsable()) {
+                out_->println(F("rejected: mvc must clearly exceed the noise floor"));
+                return;
+            }
+            working_.emgAux[site - 2] = calibration;
+            commitConfig("pattern site calibration");
+        } else if (equals(tokens[1], "train") && count >= 3) {
+            GripId grip;
+            if (!parseGrip(tokens[2], grip) || !hand_->startPatternTraining(grip)) {
+                out_->println(F("training rejected; enable pattern mode, choose a non-rest grip, and wake the hand"));
+                return;
+            }
+            out_->println(F("relax during settle, then hold the intended contraction until confirmed"));
+        } else if (equals(tokens[1], "clear") && count >= 3) {
+            GripId grip;
+            if (!parseGrip(tokens[2], grip)) {
+                out_->println(F("unknown grip"));
+                return;
+            }
+            working_.pattern.templates[static_cast<uint8_t>(grip)] = PatternTemplate{};
+            commitConfig("pattern template");
+        } else if (equals(tokens[1], "cancel")) {
+            hand_->cancelPatternTraining();
+            out_->println(F("pattern training cancelled"));
+        } else {
+            out_->println(F("usage: pattern status|enable on|off|site <2|3> <baseline> <noise> <mvc>|train <grip>|clear <grip>|cancel"));
+        }
+
     } else if (equals(command, "hold")) {
         bool enabled = (hand_->telemetry().mode != ControlMode::Hold);
         if (count >= 2 && !parseBool(tokens[1], enabled)) {
@@ -353,6 +409,22 @@ bool SerialCli::applySetting(const char* key, const char* value) {
     if (equals(key, "idle.release")) {
         return parseBool(value, working_.idleReleaseEnabled);
     }
+    if (equals(key, "pattern.enabled")) {
+        return parseBool(value, working_.pattern.enabled);
+    }
+    if (equals(key, "current.mask")) {
+        char* end = nullptr;
+        const unsigned long mask = std::strtoul(value, &end, 0);
+        if (end == value || *end != '\0' || mask >= (1u << kDigitCount)) return false;
+        working_.motorCurrent.presentMask = static_cast<uint8_t>(mask);
+        return true;
+    }
+    if (equals(key, "pattern.sites")) {
+        const int sites = std::atoi(value);
+        if (sites < 3 || sites > kPatternSiteCount) return false;
+        working_.pattern.siteCount = static_cast<uint8_t>(sites);
+        return true;
+    }
     if (equals(key, "grip.default")) {
         GripId grip;
         if (!parseGrip(value, grip)) return false;
@@ -395,6 +467,15 @@ bool SerialCli::applyFloatSetting(const char* key, float value) {
     if (equals(key, "hold.engage"))      { working_.holdGuard.engageNewtons = value;   return true; }
     if (equals(key, "hold.seconds"))     { working_.holdGuard.holdSeconds = value;     return true; }
     if (equals(key, "idle.timeout"))     { working_.idleTimeoutSeconds = value;        return true; }
+    if (equals(key, "current.trip"))     { working_.motorCurrent.tripAmps = value;     return true; }
+    if (equals(key, "current.clear"))    { working_.motorCurrent.clearAmps = value;    return true; }
+    if (equals(key, "current.trip_s"))   { working_.motorCurrent.tripSeconds = value;  return true; }
+    if (equals(key, "current.clear_s"))  { working_.motorCurrent.clearSeconds = value; return true; }
+    if (equals(key, "pattern.threshold")) { working_.pattern.signalThreshold = value;  return true; }
+    if (equals(key, "pattern.release"))   { working_.pattern.releaseThreshold = value; return true; }
+    if (equals(key, "pattern.distance"))  { working_.pattern.maximumDistance = value;  return true; }
+    if (equals(key, "pattern.margin"))    { working_.pattern.ambiguityMargin = value;  return true; }
+    if (equals(key, "pattern.hold"))      { working_.pattern.holdSeconds = value;      return true; }
 
     // Per-digit speed:  set speed.index 2.4
     if (std::strncmp(key, "speed.", 6) == 0) {
@@ -525,6 +606,7 @@ void SerialCli::printHelp() {
         "\r\n"
         "grip [next|prev|<name>]    select a grip pattern\r\n"
         "grip enable <name> on|off  add or remove a pattern from the cycle\r\n"
+        "pattern ...                 multi-site calibration and grip training\r\n"
         "hold [on|off]              freeze the hand where it is\r\n"
         "park [on|off]              safe torque off / wake up\r\n"
         "open | close               direct aperture command (muscle activity overrides)\r\n"
@@ -631,6 +713,20 @@ void SerialCli::printConfig() {
                  static_cast<double>(c.emgExtensor.baselineCounts),
                  static_cast<double>(c.emgExtensor.noiseCounts),
                  static_cast<double>(c.emgExtensor.mvcCounts));
+    for (uint8_t i = 0; i < kPatternSiteCount - 2; ++i) {
+        const EmgCalibration& site = c.emgAux[i];
+        out_->printf("  site %u   %s  baseline %.0f noise %.1f mvc %.0f\r\n",
+                     static_cast<unsigned>(i + 2), site.isUsable() ? "ok      " : "MISSING ",
+                     static_cast<double>(site.baselineCounts), static_cast<double>(site.noiseCounts),
+                     static_cast<double>(site.mvcCounts));
+    }
+    out_->printf("pattern.*    %s, sites %u, threshold %.2f, release %.2f, distance %.2f, margin %.2f, hold %.2f s\r\n",
+                 c.pattern.enabled ? "on" : "off", static_cast<unsigned>(c.pattern.siteCount),
+                 static_cast<double>(c.pattern.signalThreshold),
+                 static_cast<double>(c.pattern.releaseThreshold),
+                 static_cast<double>(c.pattern.maximumDistance),
+                 static_cast<double>(c.pattern.ambiguityMargin),
+                 static_cast<double>(c.pattern.holdSeconds));
 
     out_->printf("\r\ndrive.*      mode %s  close_speed %.2f  open_speed %.2f\r\n",
                  c.drive.mode == DriveMode::DualChannel ? "dual" : "single",
@@ -671,6 +767,12 @@ void SerialCli::printConfig() {
                  static_cast<double>(c.holdGuard.holdSeconds),
                  static_cast<double>(c.holdGuard.coolSeconds),
                  static_cast<double>(c.holdGuard.backoffScale));
+    out_->printf("current.*    mask 0x%02X  trip %.2f A / %.2f s  clear %.2f A / %.2f s\r\n",
+                 static_cast<unsigned>(c.motorCurrent.presentMask),
+                 static_cast<double>(c.motorCurrent.tripAmps),
+                 static_cast<double>(c.motorCurrent.tripSeconds),
+                 static_cast<double>(c.motorCurrent.clearAmps),
+                 static_cast<double>(c.motorCurrent.clearSeconds));
     out_->println(F("\r\nalso: speed.<digit>, scale.<grip>, grip.default, haptics, idle.release"));
 }
 
@@ -695,6 +797,18 @@ void SerialCli::printTelemetry() {
                  static_cast<unsigned long>(t.slipCount));
     out_->printf(",vb=%.2f,soc=%.3f,flt=0x%04X", static_cast<double>(t.batteryVolts),
                  static_cast<double>(t.stateOfCharge), static_cast<unsigned>(t.faults));
+    uint8_t stallMask = 0;
+    for (uint8_t i = 0; i < kPatternSiteCount; ++i) {
+        out_->printf(",s%u=%.3f,sr%u=%.0f,se%u=%.1f", static_cast<unsigned>(i),
+                     static_cast<double>(t.patternSite[i]), static_cast<unsigned>(i),
+                     static_cast<double>(t.patternRaw[i]), static_cast<unsigned>(i),
+                     static_cast<double>(t.patternEnvelope[i]));
+    }
+    for (uint8_t i = 0; i < kDigitCount; ++i) {
+        out_->printf(",i%u=%.3f", static_cast<unsigned>(i), static_cast<double>(t.motorCurrentAmps[i]));
+        if (t.motorStalled[i]) stallMask |= static_cast<uint8_t>(1u << i);
+    }
+    out_->printf(",stall=%u", static_cast<unsigned>(stallMask));
     for (uint8_t i = 0; i < kDigitCount; ++i) {
         out_->printf(",p%u=%u", static_cast<unsigned>(i),
                      static_cast<unsigned>(t.digits[i].pulseUs));

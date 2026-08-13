@@ -6,6 +6,7 @@
 
 #include "jensen/button_gestures.h"
 #include "jensen/calibration.h"
+#include "jensen/current.h"
 #include "jensen/digit.h"
 #include "jensen/emg.h"
 #include "jensen/filter.h"
@@ -14,6 +15,7 @@
 #include "jensen/hand_config.h"
 #include "jensen/hand_controller.h"
 #include "jensen/modes.h"
+#include "jensen/pattern.h"
 #include "jensen/safety.h"
 #include "jensen/util.h"
 
@@ -654,6 +656,86 @@ TEST(force_controller_target_scales_per_grip) {
 }
 
 // =============================================================================
+// current sensing and pattern recognition
+// =============================================================================
+
+TEST(current_guard_uses_direct_measured_current) {
+    MotorCurrentConfig config;
+    config.tripAmps = 2.0f;
+    config.clearAmps = 0.4f;
+    config.tripSeconds = 0.10f;
+    config.clearSeconds = 0.20f;
+    MotorCurrentGuard guard;
+    guard.configure(config, true);
+
+    for (int i = 0; i < 20; ++i) guard.update(2.5f, true, 0.01f);
+    CHECK(guard.stalled());
+    CHECK_EQ(guard.stallCount(), 1u);
+
+    // Ordinary load below the calibrated stall threshold is accepted.
+    guard.reset();
+    for (int i = 0; i < 20; ++i) guard.update(1.5f, true, 0.01f);
+    CHECK_FALSE(guard.stalled());
+}
+
+TEST(current_guard_requires_low_current_cooldown_to_recover) {
+    MotorCurrentConfig config;
+    config.tripSeconds = 0.05f;
+    config.clearSeconds = 0.20f;
+    MotorCurrentGuard guard;
+    guard.configure(config, true);
+    for (int i = 0; i < 10; ++i) guard.update(3.0f, true, 0.01f);
+    CHECK(guard.stalled());
+    for (int i = 0; i < 10; ++i) guard.update(0.0f, true, 0.01f);
+    CHECK(guard.stalled());
+    for (int i = 0; i < 15; ++i) guard.update(0.0f, true, 0.01f);
+    CHECK_FALSE(guard.stalled());
+}
+
+TEST(pattern_recognizer_selects_once_and_rearms_after_release) {
+    PatternConfig config;
+    config.enabled = true;
+    config.holdSeconds = 0.05f;
+    config.maximumDistance = 0.30f;
+    config.templates[static_cast<uint8_t>(GripId::Pinch)].centroid[2] = 0.9f;
+    config.templates[static_cast<uint8_t>(GripId::Pinch)].valid = true;
+    config.templates[static_cast<uint8_t>(GripId::Hook)].centroid[3] = 0.9f;
+    config.templates[static_cast<uint8_t>(GripId::Hook)].valid = true;
+    PatternRecognizer recognizer;
+    recognizer.configure(config);
+
+    const float pinch[kPatternSiteCount] = {0.05f, 0.05f, 0.9f, 0.05f};
+    for (int i = 0; i < 10; ++i) recognizer.update(pinch, 0.01f);
+    GripId grip = GripId::Rest;
+    CHECK(recognizer.consumeGrip(grip));
+    CHECK_EQ(static_cast<int>(grip), static_cast<int>(GripId::Pinch));
+    for (int i = 0; i < 20; ++i) recognizer.update(pinch, 0.01f);
+    CHECK_FALSE(recognizer.consumeGrip(grip));
+
+    const float rest[kPatternSiteCount] = {0, 0, 0, 0};
+    recognizer.update(rest, 0.01f);
+    for (int i = 0; i < 10; ++i) recognizer.update(pinch, 0.01f);
+    CHECK(recognizer.consumeGrip(grip));
+}
+
+TEST(pattern_training_builds_a_reusable_centroid) {
+    PatternConfig config;
+    config.enabled = true;
+    config.trainingSettleSeconds = 0.02f;
+    config.trainingCaptureSeconds = 0.05f;
+    PatternRecognizer recognizer;
+    recognizer.configure(config);
+    CHECK(recognizer.beginTraining(GripId::Tripod));
+    const float features[kPatternSiteCount] = {0.1f, 0.2f, 0.8f, 0.4f};
+    for (int i = 0; i < 20; ++i) recognizer.update(features, 0.01f);
+    PatternConfig trained;
+    CHECK(recognizer.consumeTrainingResult(trained));
+    const PatternTemplate& pattern = trained.templates[static_cast<uint8_t>(GripId::Tripod)];
+    CHECK(pattern.valid);
+    CHECK_NEAR(pattern.centroid[2], 0.8f, 0.01f);
+}
+
+// =============================================================================
 // safety
 // =============================================================================
 
@@ -1138,6 +1220,7 @@ struct Rig {
         in.servoBusOk = true;
         in.emgFlexorCounts = 512.0f;
         in.emgExtensorCounts = 512.0f;
+        for (float& counts : in.emgAuxCounts) counts = 512.0f;
         for (float& counts : in.fsrCounts) counts = 60.0f;
     }
 
@@ -1351,6 +1434,49 @@ TEST(controller_co_contraction_changes_grip) {
     const GripId first = rig.hand.grip();
     rig.run(1.5f, 600.0f, 600.0f);
     CHECK(rig.hand.grip() != first);
+}
+
+TEST(controller_motor_stall_isolates_only_the_affected_servo) {
+    Rig rig;
+    HandConfig config = calibratedConfig();
+    config.motorCurrent.presentMask = static_cast<uint8_t>(1u << index(Digit::Index));
+    config.motorCurrent.tripAmps = 2.0f;
+    config.motorCurrent.tripSeconds = 0.05f;
+    rig.reset(config);
+    rig.run(1.0f, 3.0f, 3.0f);
+    rig.in.motorCurrentAmps[index(Digit::Index)] = 3.0f;
+    rig.run(0.5f, 600.0f, 3.0f);
+
+    CHECK(rig.hand.telemetry().motorStalled[index(Digit::Index)]);
+    CHECK(rig.hand.telemetry().faults & kFaultMotorStall);
+    CHECK_EQ(rig.hand.outputs().pulseUs[index(Digit::Index)], 0);
+    CHECK_GT(rig.hand.outputs().pulseUs[index(Digit::Middle)], 0);
+    CHECK(rig.hand.outputs().servoRailEnabled);
+}
+
+TEST(controller_pattern_mode_selects_a_trained_grip_without_cocontraction) {
+    Rig rig;
+    HandConfig config = calibratedConfig();
+    config.emgAux[0] = goodEmgCalibration();
+    config.emgAux[1] = goodEmgCalibration();
+    config.pattern.enabled = true;
+    config.pattern.holdSeconds = 0.05f;
+    config.pattern.maximumDistance = 0.50f;
+    PatternTemplate& pinch = config.pattern.templates[static_cast<uint8_t>(GripId::Pinch)];
+    pinch.centroid[2] = 1.0f;
+    pinch.valid = true;
+    rig.reset(config);
+    rig.run(1.0f, 3.0f, 3.0f);
+
+    for (int i = 0; i < 200; ++i) {
+        const float sign = (i % 2) ? 1.0f : -1.0f;
+        rig.in.emgFlexorCounts = 512.0f + sign * 3.0f;
+        rig.in.emgExtensorCounts = 512.0f + sign * 3.0f;
+        rig.in.emgAuxCounts[0] = 512.0f + sign * 700.0f;
+        rig.in.emgAuxCounts[1] = 512.0f + sign * 3.0f;
+        rig.hand.update(rig.in, 0.005f);
+    }
+    CHECK_EQ(static_cast<int>(rig.hand.grip()), static_cast<int>(GripId::Pinch));
 }
 
 TEST(controller_calibration_completes_and_marks_config_dirty) {

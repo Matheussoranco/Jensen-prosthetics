@@ -23,6 +23,7 @@
 #include <cstdint>
 
 #include "jensen/calibration.h"
+#include "jensen/current.h"
 #include "jensen/digit.h"
 #include "jensen/emg.h"
 #include "jensen/force.h"
@@ -30,6 +31,7 @@
 #include "jensen/hand_config.h"
 #include "jensen/hand_state.h"
 #include "jensen/modes.h"
+#include "jensen/pattern.h"
 #include "jensen/safety.h"
 
 namespace jensen {
@@ -76,6 +78,10 @@ public:
     /// Wrist rotator, when one is fitted. 0.5 is neutral.
     void setWristTarget(float closure);
 
+    bool startPatternTraining(GripId grip);
+    void cancelPatternTraining() { pattern_.cancelTraining(); }
+    const PatternRecognizer& patternRecognizer() const { return pattern_; }
+
     /// Captures the current fingertip readings as the unloaded zero and folds
     /// the result back into the configuration. FSR zero drifts with
     /// temperature and with how much the printed fingertip pad has taken a
@@ -113,10 +119,13 @@ private:
 
     EmgChannel flexor_{};
     EmgChannel extensor_{};
+    EmgChannel aux_[kPatternSiteCount - 2]{};
     ProportionalDrive drive_{};
+    PatternRecognizer pattern_{};
     ForceSensor force_[kGraspDigitCount]{};
     GripForceController gripForce_{};
     DigitController digits_[kDigitCount]{};
+    MotorCurrentGuard current_[kDigitCount]{};
     GripSelector grips_{};
 
     ModeMachine modes_{};
@@ -147,6 +156,8 @@ private:
 
     /// Latest LM393 comparator readings, carried through to telemetry.
     bool contactDigital_[kGraspDigitCount] = {false, false, false, false, false, false};
+    float patternSite_[kPatternSiteCount] = {0.0f, 0.0f, 0.0f, 0.0f};
+    float motorCurrentAmps_[kDigitCount] = {0.0f, 0.0f, 0.0f, 0.0f, 0.0f, 0.0f, 0.0f};
 
     bool configDirty_ = false;
     bool previousContact_ = false;

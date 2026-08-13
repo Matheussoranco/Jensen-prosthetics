@@ -70,7 +70,20 @@ void HandController::configureFromConfig() {
     extensor_.configure(config_.emg);
     flexor_.setCalibration(config_.emgFlexor);
     extensor_.setCalibration(config_.emgExtensor);
-    drive_.configure(config_.drive);
+    for (uint8_t i = 0; i < kPatternSiteCount - 2; ++i) {
+        aux_[i].configure(config_.emg);
+        aux_[i].setCalibration(config_.emgAux[i]);
+    }
+    pattern_.configure(config_.pattern);
+    DriveConfig driveConfig = config_.drive;
+    // Pattern mode replaces the co-contraction grip gesture. Moving the
+    // threshold out of range also prevents the drive law from freezing while
+    // several pattern sites are active together.
+    if (config_.pattern.enabled) {
+        driveConfig.coContractionLevel = 2.0f;
+        driveConfig.coContractionReleaseLevel = 1.0f;
+    }
+    drive_.configure(driveConfig);
 
     for (uint8_t i = 0; i < kGraspDigitCount; ++i) {
         force_[i].configure(config_.forceSensor);
@@ -86,6 +99,8 @@ void HandController::configureFromConfig() {
         const bool allowRelease =
             config_.idleReleaseEnabled && (i != index(Digit::Wrist));
         digits_[i].setIdleRelease(allowRelease);
+        current_[i].configure(config_.motorCurrent,
+                              (config_.motorCurrent.presentMask & (1u << i)) != 0);
     }
 
     grips_.setEnabledMask(config_.enabledGrips);
@@ -116,11 +131,17 @@ void HandController::resetMotion() {
     gripForce_.reset();
     flexor_.reset();
     extensor_.reset();
+    for (EmgChannel& channel : aux_) channel.reset();
+    pattern_.reset();
     for (uint8_t i = 0; i < kGraspDigitCount; ++i) {
         force_[i].reset();
         digitLimit_[i] = 1.0f;
     }
-    for (uint8_t i = 0; i < kDigitCount; ++i) digits_[i].snapTo(0.0f);
+    for (uint8_t i = 0; i < kDigitCount; ++i) {
+        digits_[i].snapTo(0.0f);
+        current_[i].reset();
+        motorCurrentAmps_[i] = 0.0f;
+    }
     digits_[index(Digit::Wrist)].snapTo(wristTarget_);
 }
 
@@ -195,6 +216,20 @@ void HandController::updateSensors(const HandInputs& inputs, float dt) {
     if (!emgRunner_.running()) {
         flexor_.update(inputs.emgFlexorCounts, dt);
         extensor_.update(inputs.emgExtensorCounts, dt);
+        for (uint8_t i = 0; i < kPatternSiteCount - 2; ++i) {
+            aux_[i].update(inputs.emgAuxCounts[i], dt);
+        }
+    }
+
+    patternSite_[0] = flexor_.activation();
+    patternSite_[1] = extensor_.activation();
+    for (uint8_t i = 0; i < kPatternSiteCount - 2; ++i) patternSite_[i + 2] = aux_[i].activation();
+    pattern_.update(patternSite_, dt);
+    PatternConfig trained{};
+    if (pattern_.consumeTrainingResult(trained)) {
+        config_.pattern = trained;
+        configDirty_ = true;
+        requestHaptic(HapticCue::Confirm);
     }
 
     for (uint8_t i = 0; i < kGraspDigitCount; ++i) {
@@ -204,6 +239,7 @@ void HandController::updateSensors(const HandInputs& inputs, float dt) {
     }
 
     battery_.update(inputs.batteryVolts, dt);
+    for (uint8_t i = 0; i < kDigitCount; ++i) motorCurrentAmps_[i] = inputs.motorCurrentAmps[i];
 }
 
 void HandController::updateFaults(const HandInputs& inputs, float dt) {
@@ -213,6 +249,9 @@ void HandController::updateFaults(const HandInputs& inputs, float dt) {
     safety_.set(kFaultDigitCalibration, !config_.digitsCalibrated());
     safety_.set(kFaultOverForce, gripForce_.overForce());
     safety_.set(kFaultSustainedLoad, holdGuard_.backedOff());
+    bool motorStalled = false;
+    for (const MotorCurrentGuard& guard : current_) motorStalled = motorStalled || guard.stalled();
+    safety_.set(kFaultMotorStall, motorStalled);
 
     // An uncalibrated electrode is only a fault once the hand is meant to be
     // driven by it — flagging it during calibration would abort the very
@@ -263,10 +302,13 @@ void HandController::updateCalibration(const HandInputs& inputs, float dt) {
 void HandController::updateDrive(float dt) {
     const float velocity = drive_.update(flexor_.activation(), extensor_.activation(), dt);
 
-    if (drive_.consumeCoContraction() && modes_.acceptsUserInput()) {
+    if (!config_.pattern.enabled && drive_.consumeCoContraction() && modes_.acceptsUserInput()) {
         modes_.dispatch(SystemEvent::CoContraction);
         nextGrip();
     }
+
+    GripId recognized = GripId::Rest;
+    if (pattern_.consumeGrip(recognized) && modes_.acceptsUserInput()) selectGrip(recognized);
 
     // Any genuine muscle activity revokes a direct aperture command; the
     // wearer always outranks the CLI and the display.
@@ -358,14 +400,17 @@ void HandController::applyPose(float dt) {
         }
 
         DigitController& digit = digits_[i];
-        digit.setLocked(hold);
+        current_[i].update(motorCurrentAmps_[i], modes_.drivesServos(), dt);
+        digit.setLocked(hold || current_[i].stalled());
         digit.setClosureLimit(digitLimit_[i]);
         digit.setTarget(pose.closure[i]);
         digit.update(dt);
     }
 
     DigitController& wrist = digits_[index(Digit::Wrist)];
-    wrist.setLocked(hold);
+    current_[index(Digit::Wrist)].update(motorCurrentAmps_[index(Digit::Wrist)],
+                                        modes_.drivesServos(), dt);
+    wrist.setLocked(hold || current_[index(Digit::Wrist)].stalled());
     wrist.setClosureLimit(1.0f);
     wrist.setTarget(wristTarget_);
     wrist.update(dt);
@@ -391,7 +436,7 @@ void HandController::updateOutputs() {
     outputs_.servoRailEnabled = energised;
     outputs_.servoOutputEnabled = energised;
     for (uint8_t i = 0; i < kDigitCount; ++i) {
-        outputs_.pulseUs[i] = energised ? digits_[i].pulseUs() : 0;
+        outputs_.pulseUs[i] = (energised && !current_[i].stalled()) ? digits_[i].pulseUs() : 0;
     }
 
     outputs_.led = ledFor(modes_.mode());
@@ -411,6 +456,25 @@ void HandController::updateTelemetry(float dt) {
     t.emgExtensor = extensor_.activation();
     t.emgFlexorEnvelope = flexor_.envelope();
     t.emgExtensorEnvelope = extensor_.envelope();
+    for (uint8_t i = 0; i < kPatternSiteCount; ++i) t.patternSite[i] = patternSite_[i];
+    t.patternRaw[0] = flexor_.raw();
+    t.patternRaw[1] = extensor_.raw();
+    t.patternEnvelope[0] = flexor_.envelope();
+    t.patternEnvelope[1] = extensor_.envelope();
+    for (uint8_t i = 0; i < kPatternSiteCount - 2; ++i) {
+        t.patternRaw[i + 2] = aux_[i].raw();
+        t.patternEnvelope[i + 2] = aux_[i].envelope();
+    }
+    t.patternCandidate = GripLibrary::name(pattern_.candidate());
+    t.patternConfidence = pattern_.confidence();
+    t.patternTraining = pattern_.training();
+    t.patternTrainingProgress = pattern_.trainingProgress();
+
+    for (uint8_t i = 0; i < kDigitCount; ++i) {
+        t.motorCurrentAmps[i] = current_[i].amps();
+        t.motorStalled[i] = current_[i].stalled();
+        t.motorStallCount[i] = current_[i].stallCount();
+    }
 
     for (uint8_t i = 0; i < kGraspDigitCount; ++i) {
         t.force[i] = force_[i].force();
@@ -500,6 +564,11 @@ void HandController::commandAperture(float aperture) {
 
 void HandController::setWristTarget(float closure) {
     wristTarget_ = clamp01(closure);
+}
+
+bool HandController::startPatternTraining(GripId grip) {
+    if (!config_.pattern.enabled || !modes_.acceptsUserInput()) return false;
+    return pattern_.beginTraining(grip);
 }
 
 void HandController::tareForceSensors() {

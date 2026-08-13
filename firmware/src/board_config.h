@@ -38,6 +38,7 @@
 #include <cstdint>
 
 #include "jensen/digit.h"
+#include "jensen/pattern.h"
 
 namespace jensen {
 namespace board {
@@ -100,7 +101,20 @@ constexpr uint32_t kConsoleBaud = 115200;
 // --- Analogue inputs ---------------------------------------------------------
 constexpr int kPinEmgFlexor = 36;
 constexpr int kPinEmgExtensor = 39;
+/// Optional third and fourth pattern-recognition sites. Set these to ADC1
+/// pins exposed by the chosen ESP32 carrier, or populate them from an external
+/// ADC in sampleInputs(). They are disabled on the reference 30-pin board.
+constexpr int kPinEmgAux[kPatternSiteCount - 2] = {-1, -1};
 constexpr int kPinBatterySense = 34;
+
+/// Optional per-servo analogue current channels. The reference firmware
+/// accepts calibrated current in amperes; -1 means that channel is not fitted.
+/// A carrier with insufficient ADC1 pins should use an external simultaneous
+/// ADC and assign its readings in sampleInputs().
+constexpr int kPinMotorCurrent[kDigitCount] = {-1, -1, -1, -1, -1, -1, -1};
+constexpr float kMotorCurrentZeroVolts[kDigitCount] = {0, 0, 0, 0, 0, 0, 0};
+constexpr float kMotorCurrentVoltsPerAmp[kDigitCount] = {0.185f, 0.185f, 0.185f, 0.185f,
+                                                        0.185f, 0.185f, 0.185f};
 
 /// ADC pin per grasping digit; -1 where no fingertip sensor is fitted.
 constexpr int kPinFsr[kGraspDigitCount] = {

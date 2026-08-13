@@ -28,7 +28,7 @@ to slip — makes it tighten a step.
                                                                     │
                                                      ┌──────────────┘
                                                      ▼
-                                       velocity law (+ co-contraction gesture)
+                               velocity law (+ co-contraction or pattern gesture)
                                                      │
                                                      ▼
                                         ∫ dt ──▶ aperture 0..1 ◀── force limit
@@ -64,6 +64,8 @@ firmware/
 │       ├── util.h            clamping and mapping helpers
 │       ├── filter.h          EMA, median, envelope, rate limit, Schmitt
 │       ├── emg.*             electrode conditioning + the velocity law
+│       ├── pattern.*         four-site trained grip classifier
+│       ├── current.*         direct per-servo stall-current guard
 │       ├── digit.*           per-digit slew limiting and endpoint mapping
 │       ├── grip.*            grasp pattern library and selector
 │       ├── force.*           FSR conditioning and the grip-force loop
@@ -75,7 +77,7 @@ firmware/
 │       ├── hand_state.h      inputs / outputs / telemetry
 │       └── hand_controller.* the policy that ties it together
 ├── test/
-│   ├── native/               89 host tests for the control core
+│   ├── native/               95 host tests for the control core
 │   └── hostcheck/stubs/      declaration-only Arduino API, for syntax checks
 ├── tools/
 │   ├── run_core_tests.py     build + run the core tests without PlatformIO
@@ -270,6 +272,27 @@ without reaching for the button. Motion is frozen while the gesture is held,
 so the hand does not lurch toward whichever channel is stronger, and the
 gesture will not repeat until both channels relax again.
 
+### Multi-site pattern recognition
+
+With three or four calibrated sites, pattern mode replaces co-contraction with
+direct trained grip selection. It rejects low-signal, distant, and ambiguous
+inputs, requires a stable dwell, and rearms only after all sites relax. See
+`../hardware/current_and_emg_expansion.md` for the auxiliary-input interface.
+
+Use `srN` (raw) and `seN` (envelope) telemetry to establish auxiliary baseline,
+rest-noise peak, and MVC envelope, then train at least three grips:
+
+```text
+pattern site 2 <baseline> <noise> <mvc>
+pattern site 3 <baseline> <noise> <mvc>
+set pattern.sites 4
+pattern enable on
+pattern train pinch
+pattern train tripod
+pattern train power
+save
+```
+
 ### Grasp patterns
 
 | Name | Description |
@@ -306,6 +329,7 @@ status                     one-shot state summary
 telem [on|off] [hz]        stream telemetry (tools/jensen_monitor.py parses it)
 config                     print the active configuration and every tuning key
 grips                      list grasp patterns
+pattern ...                configure sites and train direct grip patterns
 
 grip [next|prev|<name>]    select a grasp pattern
 grip enable <name> on|off  add or remove a pattern from the cycle
@@ -341,6 +365,10 @@ the wearer always outranks the console.
 | `drive.single_open` | 0.12 | single-channel: below this the hand opens |
 | `drive.single_hold` | 0.32 | single-channel: below this it holds |
 | `drive.co_level` | 0.55 | co-contraction threshold |
+| `pattern.enabled` | off | replace co-contraction with trained grip selection |
+| `pattern.sites` | 4 | number of calibrated sites, 3 or 4 |
+| `pattern.threshold` | 0.28 | minimum activation for classification |
+| `pattern.distance` | 0.35 | maximum centroid distance |
 | `force.target` | 12 N | grip force setpoint |
 | `force.gain` | 0.05 | integral gain of the force loop |
 | `force.slip_step` | 0.05 | closure added on a detected slip |
@@ -349,6 +377,9 @@ the wearer always outranks the console.
 | `battery.warn` | 3.45 V/cell | |
 | `battery.critical` | 3.20 V/cell | park threshold |
 | `idle.timeout` | 20 s | inactivity before relaxing |
+| `current.mask` | 0 | fitted current-channel bit mask |
+| `current.trip` | 2.2 A | per-channel overload threshold |
+| `current.trip_s` | 0.25 s | duration above threshold before isolation |
 | `haptics` | on | |
 
 Changes take effect immediately and are lost on reboot unless you `save`.
@@ -405,10 +436,11 @@ The design assumptions worth knowing before relying on this:
   cannot destroy a working calibration, and a corrupt one falls back to
   defaults loudly rather than running on half of two calibrations.
 
-What is *not* handled: there is no motor current sensing, so a true stall is
-inferred from fingertip load and time rather than measured. There is no
-redundancy in the electrode path. This has not been tested against IEC 60601
-or any other medical standard.
+Optional direct current inputs isolate a channel that remains above its
+calibrated stall threshold. With the default mask of zero, the fingertip-load
+and time guard remains the fallback. There is no redundancy in the electrode
+path. This has not been tested against IEC 60601 or any other medical standard.
+Physical acceptance and durability procedures are in `../verification/README.md`.
 
 ## 10. Relationship to HACKberry
 

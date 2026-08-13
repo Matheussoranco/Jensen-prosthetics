@@ -156,7 +156,8 @@ another: in a power grasp all four fingers sweep the full range; in a key
 grip they stay curled and only the thumb moves; when pointing, the index
 never leaves full extension. Seven patterns ship, and contracting both
 electrodes together ("co-contraction") cycles them without reaching for the
-button.
+button. An optional four-site pattern recognizer replaces that gesture with
+direct, trained grip selection.
 
 Fingertip FSRs close a second loop around that. Once the grip reaches its
 force target the hand stops closing rather than stalling its servos against
@@ -169,7 +170,7 @@ Architecturally the firmware is split so that the entire control policy —
 drive law, force loop, mode transitions, calibration sequencing — lives in
 `firmware/lib/jensen_core/`, which contains no Arduino code and compiles on
 any host. That is what allows the behaviour of the prosthesis to be
-exercised against synthetic inputs in an 89-case test suite without a hand
+exercised against synthetic inputs in a 95-case test suite without a hand
 attached; `firmware/src/` only samples ADCs and writes servo pulses. The
 velocity-integration approach is the one idea taken from exiii's HACKberry
 [3]; no HACKberry code is used (see [`NOTICE.md`](NOTICE.md)).
@@ -185,7 +186,7 @@ Jensen-prosthetics/
 │   ├── platformio.ini
 │   ├── src/                 ESP32 application (peripherals only)
 │   ├── lib/jensen_core/     control policy — no Arduino, host-testable
-│   ├── test/native/         89 host tests for the control core
+│   ├── test/native/         95 host tests for the control core
 │   ├── tools/               test runner, syntax check, telemetry monitor
 │   └── docs/                Nextion HMI component specification
 ├── hardware/
@@ -237,21 +238,24 @@ Full third-party attributions are in [`NOTICE.md`](NOTICE.md). In summary:
 - Design approach and conventions draw on Open Bionics, exiii's HACKberry,
   e-NABLE, and the academic literature cited below.
 
-## 9. Future Work
+## 9. Implementation and Verification Status
 
-- **Bench validation of the firmware.** The control core is covered by an
-  89-case host test suite, but the ESP32 build has not yet been run against
-  physical hardware; servo endpoints, the FSR force fit, and the battery
-  divider ratio all need measuring on a real build.
-- Motor current sensing, so a stalled servo can be detected directly rather
-  than inferred from fingertip load and elapsed time.
-- Pattern-recognition control across more than two electrode sites, to
-  replace co-contraction as the grip-change gesture.
-- Independent verification and release of native SolidWorks source once
-  personal metadata can be conclusively stripped or the files are
-  re-authored in a clean template.
-- Quantified grasp-force and cycle-life testing against the benchmarks
-  discussed in [1] and [6].
+The software portions of the former future-work list are implemented:
+
+- optional direct per-servo current supervision isolates a measured stall and
+  reports current/stall telemetry;
+- calibrated four-site EMG pattern recognition provides trained direct grip
+  selection and replaces co-contraction when enabled;
+- the host suite covers both paths, configuration version 1 migrates to version
+  2, and the ESP32 application passes the declaration-level syntax build.
+
+Physical and source-release claims remain evidence gates, not unchecked prose.
+[`verification/README.md`](verification/README.md) defines the bench, battery,
+FSR, stall, blinded pattern, grasp-force, 300,000-cycle durability, and native
+SolidWorks review procedures. `verification/verify_campaign.py` returns success
+only for a complete passing device campaign. No passing physical campaign or
+native SolidWorks files are included yet, so the project does not claim those
+results.
 
 ## 10. Disclaimer
 

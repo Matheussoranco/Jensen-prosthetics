@@ -13,6 +13,7 @@
 #include "jensen/digit.h"
 #include "jensen/grip.h"
 #include "jensen/modes.h"
+#include "jensen/pattern.h"
 
 namespace jensen {
 
@@ -23,7 +24,9 @@ struct HandInputs {
     /// needs to see the sample rate it is actually running at.
     float emgFlexorCounts = 0.0f;
     float emgExtensorCounts = 0.0f;
+    float emgAuxCounts[kPatternSiteCount - 2] = {0.0f, 0.0f};
     float fsrCounts[kGraspDigitCount] = {0.0f, 0.0f, 0.0f, 0.0f, 0.0f, 0.0f};
+    float motorCurrentAmps[kDigitCount] = {0.0f, 0.0f, 0.0f, 0.0f, 0.0f, 0.0f, 0.0f};
 
     /// Optional LM393 comparator outputs, one per instrumented fingertip.
     /// Used only to corroborate contact — the analogue path is authoritative.
@@ -100,6 +103,17 @@ struct HandTelemetry {
     float emgExtensor = 0.0f;
     float emgFlexorEnvelope = 0.0f;   ///< raw envelope in ADC counts
     float emgExtensorEnvelope = 0.0f;
+    float patternSite[kPatternSiteCount] = {0.0f, 0.0f, 0.0f, 0.0f};
+    float patternRaw[kPatternSiteCount] = {0.0f, 0.0f, 0.0f, 0.0f};
+    float patternEnvelope[kPatternSiteCount] = {0.0f, 0.0f, 0.0f, 0.0f};
+    const char* patternCandidate = nullptr;
+    float patternConfidence = 0.0f;
+    bool patternTraining = false;
+    float patternTrainingProgress = 0.0f;
+
+    float motorCurrentAmps[kDigitCount] = {0.0f, 0.0f, 0.0f, 0.0f, 0.0f, 0.0f, 0.0f};
+    bool motorStalled[kDigitCount] = {false, false, false, false, false, false, false};
+    uint32_t motorStallCount[kDigitCount] = {0, 0, 0, 0, 0, 0, 0};
 
     float force[kGraspDigitCount] = {0.0f, 0.0f, 0.0f, 0.0f, 0.0f, 0.0f};
     /// LM393 comparator outputs, passed through for diagnostics only. The

@@ -14,6 +14,10 @@ namespace {
 constexpr int kInputPins[] = {
     board::kPinEmgFlexor,   board::kPinEmgExtensor, board::kPinBatterySense,
     board::kPinFsr[0],      board::kPinFsr[2],      board::kPinFsr[3],
+    board::kPinEmgAux[0],   board::kPinEmgAux[1],
+    board::kPinMotorCurrent[0], board::kPinMotorCurrent[1], board::kPinMotorCurrent[2],
+    board::kPinMotorCurrent[3], board::kPinMotorCurrent[4], board::kPinMotorCurrent[5],
+    board::kPinMotorCurrent[6],
 };
 
 }  // namespace
@@ -48,6 +52,13 @@ uint32_t readMillivolts(int pin, uint8_t samples) {
 float readBatteryVolts(int pin, float dividerRatio, uint8_t samples) {
     if (pin < 0 || dividerRatio <= 0.0f) return 0.0f;
     return (static_cast<float>(readMillivolts(pin, samples)) / 1000.0f) * dividerRatio;
+}
+
+float readCurrentAmps(int pin, float zeroVolts, float voltsPerAmp, uint8_t samples) {
+    if (pin < 0 || voltsPerAmp <= 0.0f) return 0.0f;
+    const float volts = static_cast<float>(readMillivolts(pin, samples)) / 1000.0f;
+    const float amps = (volts - zeroVolts) / voltsPerAmp;
+    return amps > 0.0f ? amps : 0.0f;
 }
 
 }  // namespace analog
