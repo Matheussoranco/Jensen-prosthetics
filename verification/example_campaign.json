@@ -1,0 +1,52 @@
+{
+  "metadata": {
+    "device_id": "EXAMPLE-NOT-A-REAL-TEST",
+    "firmware_commit": "0000000",
+    "operator": "example",
+    "date_utc": "2000-01-01T00:00:00Z",
+    "instruments": [
+      {"id": "DMM-EXAMPLE", "calibration_due": "2000-12-31"},
+      {"id": "LOADCELL-EXAMPLE", "calibration_due": "2000-12-31"}
+    ]
+  },
+  "thresholds": {
+    "battery_max_error_percent": 2.0,
+    "fsr_mean_error_percent": 20.0,
+    "stall_max_latency_ms": 300.0,
+    "pattern_min_overall_accuracy": 0.90,
+    "pattern_min_class_accuracy": 0.80,
+    "minimum_practical_grip_newtons": 45.0,
+    "maximum_pinch_newtons": 65.0,
+    "minimum_grasp_cycles": 300000,
+    "service_goal_grasp_cycles": 500000
+  },
+  "battery": [
+    {"reference_volts": 8.40, "telemetry_volts": 8.38},
+    {"reference_volts": 7.40, "telemetry_volts": 7.42},
+    {"reference_volts": 6.60, "telemetry_volts": 6.59}
+  ],
+  "servo_endpoints": [
+    {"digit": "thumb", "open_us": 980, "closed_us": 2050, "clearance_pass": true},
+    {"digit": "index", "open_us": 1000, "closed_us": 2000, "clearance_pass": true},
+    {"digit": "middle", "open_us": 1000, "closed_us": 2000, "clearance_pass": true},
+    {"digit": "ring", "open_us": 1000, "closed_us": 2000, "clearance_pass": true},
+    {"digit": "pinky", "open_us": 1000, "closed_us": 2000, "clearance_pass": true}
+  ],
+  "fsr": [
+    {"sensor": "thumb", "reference_newtons": 5, "telemetry_newtons": 5.2},
+    {"sensor": "thumb", "reference_newtons": 10, "telemetry_newtons": 9.7},
+    {"sensor": "thumb", "reference_newtons": 15, "telemetry_newtons": 15.4},
+    {"sensor": "index", "reference_newtons": 5, "telemetry_newtons": 5.1},
+    {"sensor": "index", "reference_newtons": 10, "telemetry_newtons": 9.8},
+    {"sensor": "index", "reference_newtons": 15, "telemetry_newtons": 15.2},
+    {"sensor": "middle", "reference_newtons": 5, "telemetry_newtons": 4.9},
+    {"sensor": "middle", "reference_newtons": 10, "telemetry_newtons": 10.3},
+    {"sensor": "middle", "reference_newtons": 15, "telemetry_newtons": 14.8}
+  ],
+  "stall_trials": [
+    {"digit": "index", "detection_latency_ms": 250, "isolated_channel": true, "other_channels_operational": true}
+  ],
+  "pattern_trials": [],
+  "grasp_force": [],
+  "cycle_life": []
+}

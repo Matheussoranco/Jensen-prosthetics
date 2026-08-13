@@ -1,0 +1,27 @@
+{
+  "metadata": {
+    "device_id": "",
+    "firmware_commit": "",
+    "operator": "",
+    "date_utc": "",
+    "instruments": []
+  },
+  "thresholds": {
+    "battery_max_error_percent": 2.0,
+    "fsr_mean_error_percent": 20.0,
+    "stall_max_latency_ms": 300.0,
+    "pattern_min_overall_accuracy": 0.90,
+    "pattern_min_class_accuracy": 0.80,
+    "minimum_practical_grip_newtons": 45.0,
+    "maximum_pinch_newtons": 65.0,
+    "minimum_grasp_cycles": 300000,
+    "service_goal_grasp_cycles": 500000
+  },
+  "battery": [],
+  "servo_endpoints": [],
+  "fsr": [],
+  "stall_trials": [],
+  "pattern_trials": [],
+  "grasp_force": [],
+  "cycle_life": []
+}
