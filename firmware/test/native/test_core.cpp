@@ -279,6 +279,29 @@ TEST(drive_co_contraction_fires_once_and_rearms) {
     CHECK(drive.consumeCoContraction());
 }
 
+TEST(drive_co_contraction_disabled_by_flag_not_thresholds) {
+    // Pattern mode disables the gesture via coContractionEnabled. Sustained
+    // dual contraction must neither fire nor freeze the drive law.
+    ProportionalDrive drive;
+    DriveConfig config;
+    config.mode = DriveMode::DualChannel;
+    config.coContractionLevel = 0.6f;
+    config.coContractionReleaseLevel = 0.3f;
+    config.coContractionSeconds = 0.2f;
+    config.coContractionEnabled = false;
+    // Thresholds stay in their useful range (the old 2.0f/1.0f hack
+    // corrupted any CLI dump of the tuning).
+    config.closeSpeed = 2.0f;
+    config.openSpeed = 3.0f;
+    drive.configure(config);
+
+    for (int i = 0; i < 100; ++i) drive.update(0.9f, 0.9f, 0.01f);
+    CHECK_FALSE(drive.consumeCoContraction());
+    CHECK_FALSE(drive.coContracting());
+    // Drive law keeps working: opposing channels still subtract.
+    CHECK_NEAR(drive.update(1.0f, 0.0f, 0.01f), 2.0f, 1e-6);
+}
+
 // =============================================================================
 // digits
 // =============================================================================
@@ -554,6 +577,37 @@ TEST(force_slip_detected_on_rapid_unload_while_gripping) {
     CHECK_FALSE(sensor.consumeSlip());  // one-shot
 }
 
+TEST(force_tare_averages_recent_samples_not_a_single_reading) {
+    ForceSensor sensor;
+    sensor.configure(ForceSensorConfig{});
+    sensor.setCalibration(makeForceCal());
+
+    const float base = countsForNewtons(2.0f);
+    for (int i = 0; i < 7; ++i) sensor.update(base, 0.001f);
+    sensor.update(base + 800.0f, 0.001f);  // single ADC spike
+    sensor.tare();
+    // Mean of the last 8, not the spike.
+    const float expected = (7.0f * base + (base + 800.0f)) / 8.0f;
+    CHECK_NEAR(static_cast<float>(sensor.calibration().zeroCounts), expected, 1.0f);
+}
+
+TEST(force_tare_preserves_pending_slip) {
+    ForceSensor sensor;
+    ForceSensorConfig config;
+    config.slipRateNewtonsPerSec = -30.0f;
+    config.smoothingSeconds = 0.005f;
+    config.derivativeSeconds = 0.005f;
+    sensor.configure(config);
+    sensor.setCalibration(makeForceCal());
+
+    settleForce(sensor, 12.0f);
+    CHECK(sensor.contact());
+    for (int i = 0; i < 20; ++i) sensor.update(countsForNewtons(12.0f - 0.4f * i), 0.001f);
+    // Slip is pending; re-zeroing must not swallow the in-flight report.
+    sensor.tare();
+    CHECK(sensor.consumeSlip());
+}
+
 TEST(force_controller_limits_closure_under_load) {
     ForceSensor sensors[kGraspDigitCount];
     for (auto& sensor : sensors) {
@@ -786,6 +840,23 @@ TEST(battery_first_sample_seeds_the_filter) {
     battery.update(8.0f, 0.01f);
     CHECK_NEAR(battery.packVolts(), 8.0f, 1e-3);
     CHECK_FALSE(battery.critical());
+}
+
+TEST(battery_invalid_until_first_sample) {
+    // Before any sample there is no estimate: report invalid + NaN rather
+    // than 0 V (which latched battery-critical and parked the hand).
+    BatteryMonitor battery;
+    battery.configure(BatteryConfig{});
+    battery.reset();
+    CHECK_FALSE(battery.valid());
+    CHECK(std::isnan(battery.packVolts()));
+    CHECK(std::isnan(battery.cellVolts()));
+    CHECK(std::isnan(battery.stateOfCharge()));
+    CHECK_FALSE(battery.low());
+    CHECK_FALSE(battery.critical());
+    battery.update(8.0f, 0.01f);
+    CHECK(battery.valid());
+    CHECK_FALSE(std::isnan(battery.packVolts()));
 }
 
 TEST(hold_guard_backs_off_after_sustained_load_and_recovers) {

@@ -29,7 +29,13 @@ uint32_t crc32(const void* data, size_t length);
 
 struct HandConfig {
     static constexpr uint32_t kMagic = 0x4A454E53u;  // 'JENS'
-    static constexpr uint16_t kVersion = 2;
+    // Bumped whenever a field is added/removed/renamed: ConfigStore rejects
+    // stored blobs by (length + whole-struct CRC + this version), so a
+    // layout change can never be misread as calibration — the hand falls
+    // back to defaults and the calibration faults tell the user to
+    // recalibrate. V3 adds DriveConfig::coContractionEnabled and
+    // GripForceConfig::proportionalGain.
+    static constexpr uint16_t kVersion = 3;
 
     uint32_t magic = kMagic;
     uint16_t version = kVersion;

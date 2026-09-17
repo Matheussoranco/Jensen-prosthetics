@@ -12,11 +12,21 @@ bool ForceCalibration::isValid() const {
 
 float ForceCalibration::newtons(float rawCounts) const {
     if (!isValid()) return 0.0f;
+    if (!std::isfinite(rawCounts)) return 0.0f;
     const float span = static_cast<float>(spanCounts) - static_cast<float>(zeroCounts);
     const float normalized = (rawCounts - static_cast<float>(zeroCounts)) / span;
     if (normalized <= 0.0f) return 0.0f;
     const float shaped = (exponent == 1.0f) ? normalized : std::pow(normalized, exponent);
-    return shaped * referenceNewtons;
+    float newtons = shaped * referenceNewtons;
+    // Upper clamp: an FSR saturates, it never reports 10x the reference
+    // load. Without this a shorted rail (4095 counts) feeds an unbounded
+    // peakForce into the grip loop and the hold guard. 2x reference keeps
+    // genuine overloads visible while bounding the fault path.
+    const float cap = referenceNewtons * 2.0f;
+    if (!std::isfinite(newtons)) return cap;
+    if (newtons > cap) newtons = cap;
+    if (newtons < 0.0f) newtons = 0.0f;
+    return newtons;
 }
 
 // --- ForceSensor -------------------------------------------------------------
@@ -40,10 +50,16 @@ void ForceSensor::reset() {
     force_ = 0.0f;
     rate_ = 0.0f;
     slipEvent_ = false;
+    for (uint8_t i = 0; i < kTareSamples; ++i) rawHistory_[i] = 0.0f;
+    rawHistoryCount_ = 0;
+    rawHistoryHead_ = 0;
 }
 
 float ForceSensor::update(float rawCounts, float dt) {
     raw_ = rawCounts;
+    rawHistory_[rawHistoryHead_] = rawCounts;
+    rawHistoryHead_ = static_cast<uint8_t>((rawHistoryHead_ + 1) % kTareSamples);
+    if (rawHistoryCount_ < kTareSamples) ++rawHistoryCount_;
     if (!calibration_.present) {
         force_ = 0.0f;
         rate_ = 0.0f;
@@ -73,10 +89,23 @@ bool ForceSensor::consumeSlip() {
 }
 
 void ForceSensor::tare() {
-    if (raw_ > 0.0f) {
-        calibration_.zeroCounts = static_cast<uint16_t>(raw_ < 65535.0f ? raw_ : 65535.0f);
+    // Mean of recent history, not the single latest sample: a lone ADC spike
+    // (servo switching noise is the usual suspect) would otherwise bias the
+    // zero — and therefore every newton — until the next tare.
+    float zero = raw_;
+    if (rawHistoryCount_ > 0) {
+        float sum = 0.0f;
+        for (uint8_t i = 0; i < rawHistoryCount_; ++i) sum += rawHistory_[i];
+        zero = sum / static_cast<float>(rawHistoryCount_);
     }
+    if (zero > 0.0f) {
+        calibration_.zeroCounts = static_cast<uint16_t>(zero < 65535.0f ? zero : 65535.0f);
+    }
+    // A pending slip report belongs to the grasp in progress, not to the
+    // zeroing procedure: reset() clears it, so save and restore it here.
+    const bool pendingSlip = slipEvent_;
     reset();
+    slipEvent_ = pendingSlip;
 }
 
 // --- GripForceController -----------------------------------------------------
@@ -85,6 +114,8 @@ void GripForceController::configure(const GripForceConfig& config) {
     config_ = config;
     if (config_.maxNewtons < config_.targetNewtons) config_.maxNewtons = config_.targetNewtons;
     config_.minLimit = clamp01(config_.minLimit);
+    if (config_.proportionalGain < 0.0f) config_.proportionalGain = 0.0f;
+    if (config_.integralGain < 0.0f) config_.integralGain = 0.0f;
 }
 
 void GripForceController::reset() {
@@ -93,6 +124,7 @@ void GripForceController::reset() {
     contact_ = false;
     overForce_ = false;
     slipCount_ = 0;
+    prevError_ = 0.0f;
 }
 
 void GripForceController::setTargetScale(float scale) {
@@ -131,12 +163,21 @@ void GripForceController::update(ForceSensor* sensors, uint8_t count, float curr
         limit_ = clamp01(limit_ + config_.slipTightenStep);
     }
 
-    // Integral-only regulation. There is no position feedback from the servos,
-    // so a proportional term would act on a quantity we cannot observe; the
-    // integrator simply walks the allowed closure until measured force sits at
-    // the setpoint.
+    // Incremental (velocity-form) PI regulation. The output `limit_` is
+    // itself the integrator state, so the proportional action applies to the
+    // *change* in error and the integral to the error itself:
+    //
+    //   limit += Kp * (e - ePrev) + Ki * e * dt
+    //
+    // Pure integral-only control reacted a full error-second late to a
+    // sudden overload; the Kp term bites on the first tick the force jumps.
+    // Because P acts on (e - ePrev), a steady-state error does not keep
+    // pushing — no proportional windup, and the anti-windup clamp below
+    // still bounds the single remaining integrator.
     const float error = target - peakForce_;
-    limit_ = clamp01(limit_ + config_.integralGain * error * dt);
+    limit_ = clamp01(limit_ + config_.proportionalGain * (error - prevError_) +
+                      config_.integralGain * error * dt);
+    prevError_ = error;
 
     // Anti-windup: while in contact the limit must stay close to where the
     // hand actually is, otherwise releasing an object leaves a large stale

@@ -53,6 +53,9 @@ struct ForceSensorConfig {
 /// One fingertip force channel.
 class ForceSensor {
 public:
+    /// Samples averaged by tare() when capturing the unloaded zero.
+    static constexpr uint8_t kTareSamples = 8;
+
     void configure(const ForceSensorConfig& config);
     void setCalibration(const ForceCalibration& calibration);
     const ForceCalibration& calibration() const { return calibration_; }
@@ -71,9 +74,12 @@ public:
     /// Reads and clears the one-shot slip event.
     bool consumeSlip();
 
-    /// Capture the current reading as the unloaded zero. Called at boot and
-    /// from the CLI; FSR zero drifts with temperature and with how the
-    /// fingertip pad has been compressed.
+    /// Capture the unloaded zero as the MEAN of the last kTareSamples raw
+    /// readings (not a single sample: one ADC spike would bias every later
+    /// newton). Called at boot and from the CLI; FSR zero drifts with
+    /// temperature and with how the fingertip pad has been compressed.
+    /// Unlike reset(), a pending slip event survives tare() — re-zeroing
+    /// must not swallow an in-flight slip report.
     void tare();
 
 private:
@@ -87,12 +93,18 @@ private:
     float force_ = 0.0f;
     float rate_ = 0.0f;
     bool slipEvent_ = false;
+
+    /// Ring of recent raw readings feeding tare(). Written by update().
+    float rawHistory_[kTareSamples] = {};
+    uint8_t rawHistoryCount_ = 0;
+    uint8_t rawHistoryHead_ = 0;
 };
 
 struct GripForceConfig {
     float targetNewtons = 12.0f;   ///< regulation setpoint
     float maxNewtons = 22.0f;      ///< above this the supervisor raises a fault
     float integralGain = 0.05f;    ///< closure units per newton-second
+    float proportionalGain = 0.01f;///< closure units per newton of error *change*
     float slipTightenStep = 0.05f; ///< closure added immediately on a slip
     float releasePerSecond = 1.5f; ///< how fast the limit relaxes with no contact
     float minLimit = 0.05f;        ///< never clamp the hand fully open
@@ -134,6 +146,8 @@ private:
     bool contact_ = false;
     bool overForce_ = false;
     uint32_t slipCount_ = 0;
+    /// Previous error for the incremental (velocity-form) PI law.
+    float prevError_ = 0.0f;
 };
 
 }  // namespace jensen

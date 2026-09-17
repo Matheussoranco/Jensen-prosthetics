@@ -54,6 +54,10 @@ def evaluate(data: dict[str, Any]) -> list[Gate]:
     if len(battery) < 3:
         gates.append(pending("Battery divider", "at least 3 points and max error within threshold",
                              f"received {len(battery)} point(s)"))
+    elif any(number(row["reference_volts"]) == 0 for row in battery):
+        bad = sum(1 for row in battery if number(row["reference_volts"]) == 0)
+        gates.append(Gate("Battery divider", "FAIL", f"{bad} point(s) with 0 V reference",
+                          "reference_volts must be non-zero (relative error is undefined at 0 V)"))
     else:
         errors = [abs(number(row["telemetry_volts"]) - number(row["reference_volts"])) /
                   number(row["reference_volts"]) * 100.0 for row in battery]

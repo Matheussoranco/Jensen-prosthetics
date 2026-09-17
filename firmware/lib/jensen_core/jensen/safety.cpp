@@ -1,5 +1,7 @@
 #include "jensen/safety.h"
 
+#include <limits>
+
 namespace jensen {
 
 // --- BatteryMonitor ----------------------------------------------------------
@@ -63,10 +65,12 @@ void BatteryMonitor::update(float packVolts, float dt) {
 }
 
 float BatteryMonitor::cellVolts() const {
+    if (!smoothed_.primed()) return std::numeric_limits<float>::quiet_NaN();
     return smoothed_.value() / static_cast<float>(config_.cellCount);
 }
 
 float BatteryMonitor::stateOfCharge() const {
+    if (!smoothed_.primed()) return std::numeric_limits<float>::quiet_NaN();
     const float v = cellVolts();
     if (v <= kSocCurve[0].volts) return 0.0f;
     if (v >= kSocCurve[kSocPoints - 1].volts) return 1.0f;
@@ -138,7 +142,7 @@ void LoopMonitor::update(float dt) {
 
 // --- SafetySupervisor --------------------------------------------------------
 
-void SafetySupervisor::reset() { faults_ = kFaultNone; }
+void SafetySupervisor::reset() { faults_ = kFaultNone; severeSinceMs_ = 0; severeTiming_ = false; }
 
 void SafetySupervisor::set(FaultFlag flag, bool asserted) {
     if (asserted) {
@@ -150,8 +154,25 @@ void SafetySupervisor::set(FaultFlag flag, bool asserted) {
 
 bool SafetySupervisor::requiresSafeTorqueOff() const {
     // Faults where continuing to drive servos is either useless or unsafe.
-    constexpr uint16_t kSevere = kFaultBatteryCritical | kFaultServoBus | kFaultDigitCalibration;
+    // Over-force and motor stall park the hand: both mean the integrator
+    // must not keep winding into a load it cannot move — torque comes off
+    // (updateOutputs cuts pulses) and updateDrive relaxes to open.
+    constexpr uint16_t kSevere = kFaultBatteryCritical | kFaultServoBus | kFaultDigitCalibration |
+                                 kFaultOverForce | kFaultMotorStall;
     return (faults_ & kSevere) != 0;
+}
+
+bool SafetySupervisor::requiresSafeTorqueOffDebounced(uint32_t nowMs, uint32_t confirmMs) const {
+    if (!requiresSafeTorqueOff()) {
+        severeTiming_ = false;
+        severeSinceMs_ = nowMs;
+        return false;
+    }
+    if (!severeTiming_) {
+        severeTiming_ = true;
+        severeSinceMs_ = nowMs;
+    }
+    return (nowMs - severeSinceMs_) >= confirmMs;
 }
 
 bool SafetySupervisor::requiresWarning() const {

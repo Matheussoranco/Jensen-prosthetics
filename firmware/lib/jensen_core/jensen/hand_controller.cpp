@@ -48,7 +48,10 @@ void HandController::begin(const HandConfig& config) {
     safety_.reset();
     loop_.configure(kNominalLoopSeconds);
     loop_.reset();
-    battery_.reset(0.0f);
+    // No known pack voltage at boot: leave the monitor unprimed (invalid)
+    // until the first ADC sample seeds it, instead of priming with 0 V —
+    // which read as a critically flat pack and parked the hand.
+    battery_.reset();
     holdGuard_.reset();
 
     resetMotion();
@@ -76,13 +79,11 @@ void HandController::configureFromConfig() {
     }
     pattern_.configure(config_.pattern);
     DriveConfig driveConfig = config_.drive;
-    // Pattern mode replaces the co-contraction grip gesture. Moving the
-    // threshold out of range also prevents the drive law from freezing while
-    // several pattern sites are active together.
-    if (config_.pattern.enabled) {
-        driveConfig.coContractionLevel = 2.0f;
-        driveConfig.coContractionReleaseLevel = 1.0f;
-    }
+    // Pattern mode replaces the co-contraction grip gesture: several pattern
+    // sites firing together would otherwise trip the gesture detector and
+    // freeze the drive law. Disabled via the explicit flag (never by pushing
+    // thresholds out of range).
+    driveConfig.coContractionEnabled = !config_.pattern.enabled;
     drive_.configure(driveConfig);
 
     for (uint8_t i = 0; i < kGraspDigitCount; ++i) {
@@ -260,11 +261,16 @@ void HandController::updateFaults(const HandInputs& inputs, float dt) {
     safety_.set(kFaultEmgCalibration, !calibrating && !config_.emgCalibrated());
 
     // An input pinned at either rail for seconds at a time is a wiring
-    // problem, not a contraction.
+    // problem, not a contraction. Both channels are watched: a stuck
+    // extensor used to read as "user fully relaxed" and silently killed
+    // dual-channel drive.
     const float flex = inputs.emgFlexorCounts;
-    const bool stuck = (flex <= kRailMarginCounts) ||
-                       (flex >= kAdcFullScale - kRailMarginCounts);
-    if (stuck && !calibrating) {
+    const float ext = inputs.emgExtensorCounts;
+    const bool flexStuck = (flex <= kRailMarginCounts) ||
+                           (flex >= kAdcFullScale - kRailMarginCounts);
+    const bool extStuck = (ext <= kRailMarginCounts) ||
+                          (ext >= kAdcFullScale - kRailMarginCounts);
+    if ((flexStuck || extStuck) && !calibrating) {
         emgStuckTimer_ += dt;
     } else {
         emgStuckTimer_ = 0.0f;
@@ -302,7 +308,7 @@ void HandController::updateCalibration(const HandInputs& inputs, float dt) {
 void HandController::updateDrive(float dt) {
     const float velocity = drive_.update(flexor_.activation(), extensor_.activation(), dt);
 
-    if (!config_.pattern.enabled && drive_.consumeCoContraction() && modes_.acceptsUserInput()) {
+    if (drive_.consumeCoContraction() && modes_.acceptsUserInput()) {
         modes_.dispatch(SystemEvent::CoContraction);
         nextGrip();
     }

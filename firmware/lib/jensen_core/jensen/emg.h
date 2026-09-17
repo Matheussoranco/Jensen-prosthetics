@@ -132,6 +132,12 @@ struct DriveConfig {
     float coContractionSeconds = 0.20f;
     /// Both channels must fall below this before the gesture can re-arm.
     float coContractionReleaseLevel = 0.30f;
+    /// Master switch for the gesture. Pattern mode disables it (several
+    /// pattern sites firing together would otherwise look like a
+    /// co-contraction); previously this was done by pushing the thresholds
+    /// out of range (2.0f/1.0f), an unreadable hack that also corrupted any
+    /// CLI dump of the tuning.
+    bool coContractionEnabled = true;
 };
 
 /// Converts channel activations into an aperture velocity, and detects the

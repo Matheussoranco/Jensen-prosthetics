@@ -164,6 +164,11 @@ float ProportionalDrive::singleChannelVelocity(float flex) const {
 }
 
 void ProportionalDrive::updateCoContraction(float flex, float ext, float dt) {
+    if (!config_.coContractionEnabled) {
+        coTimer_ = 0.0f;
+        coActive_ = false;
+        return;
+    }
     const bool bothHigh = (flex >= config_.coContractionLevel) && (ext >= config_.coContractionLevel);
     const bool bothLow = (flex <= config_.coContractionReleaseLevel) &&
                          (ext <= config_.coContractionReleaseLevel);

@@ -7,6 +7,7 @@
 #pragma once
 
 #include <cstdint>
+#include <limits>
 
 #include "jensen/filter.h"
 #include "jensen/util.h"
@@ -45,7 +46,17 @@ public:
 
     void update(float packVolts, float dt);
 
-    float packVolts() const { return smoothed_.value(); }
+    /// False until the first real sample seeds the filter. reset(0) —
+    /// "no known voltage" — deliberately leaves the monitor unprimed
+    /// instead of reporting a flat pack (which used to park the hand for
+    /// seconds after every boot).
+    bool valid() const { return smoothed_.primed(); }
+
+    /// Volts, or NaN while !valid(). Check valid() before displaying.
+    float packVolts() const {
+        return smoothed_.primed() ? smoothed_.value()
+                                  : std::numeric_limits<float>::quiet_NaN();
+    }
     float cellVolts() const;
     /// Rough state of charge in [0, 1] from a resting Li-ion discharge curve.
     /// Under load this reads low; it is a fuel gauge for the user, not a
@@ -71,12 +82,14 @@ struct HoldGuardConfig {
 
 /// Duty-cycle protection for the tendon servos.
 ///
-/// The hand has no current sensing, so an actual stall cannot be measured
-/// directly. What *can* be measured is how long the fingertips have been
-/// loaded, which is the same condition that puts an MG996R near its stall
-/// current. After a sustained hold the guard reduces the force target rather
-/// than releasing the object outright — a prosthesis that drops what it is
-/// carrying to protect itself is worse than one that grips a little softer.
+/// Per-servo current IS sampled when fitted: main.cpp fills
+/// `HandInputs::motorCurrentAmps[]` from `board::kPinMotorCurrent[]`
+/// (see board_config.h; -1 = channel not fitted) and feeds
+/// `MotorCurrentConfig`/kFaultMotorStall for direct stall detection.
+/// HoldGuard is the complementary thermal/duty fallback: after a sustained
+/// hold it reduces the force target rather than releasing the object
+/// outright — a prosthesis that drops what it is carrying to protect
+/// itself is worse than one that grips a little softer.
 class HoldGuard {
 public:
     void configure(const HoldGuardConfig& config);
@@ -132,7 +145,12 @@ public:
     bool any() const { return faults_ != kFaultNone; }
 
     /// True when the hand must be parked and servo pulses removed.
+    /// Immediate (no debounce): severe faults must cut torque at once.
     bool requiresSafeTorqueOff() const;
+    /// Time-debounced variant: the severe condition must persist for
+    /// `confirmMs` before reporting true (guards against a single bad
+    /// sample parking the hand). `nowMs` comes from millis().
+    bool requiresSafeTorqueOffDebounced(uint32_t nowMs, uint32_t confirmMs = 50) const;
     /// True when the hand may keep operating but the user should be told.
     bool requiresWarning() const;
 
@@ -141,6 +159,10 @@ public:
 
 private:
     uint16_t faults_ = kFaultNone;
+    // Debounce state for the time-guarded overload (mutable so the
+    // immediate const query stays unchanged).
+    mutable uint32_t severeSinceMs_ = 0;
+    mutable bool severeTiming_ = false;
 };
 
 const char* faultName(FaultFlag flag);

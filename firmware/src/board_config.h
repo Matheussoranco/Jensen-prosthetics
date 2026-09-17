@@ -158,5 +158,23 @@ constexpr uint32_t kButtonDoubleClickMillis = 350;
 constexpr uint32_t kButtonLongPressMillis = 1200;
 constexpr uint32_t kButtonVeryLongPressMillis = 4000;
 
+// Pin-map consistency: array extents must match the core counts they index.
+// (kPatternSiteCount from pattern.h, kDigitCount/kGraspDigitCount from digit.h,
+// kServoChannel/kPinMotorCurrent per digit, FSR/contact per grasping digit.)
+static_assert(sizeof(kPinEmgAux) / sizeof(kPinEmgAux[0]) == kPatternSiteCount - 2,
+              "kPinEmgAux must cover the aux pattern sites");
+static_assert(sizeof(kPinMotorCurrent) / sizeof(kPinMotorCurrent[0]) == kDigitCount,
+              "kPinMotorCurrent must have one entry per digit");
+static_assert(sizeof(kMotorCurrentZeroVolts) / sizeof(kMotorCurrentZeroVolts[0]) == kDigitCount,
+              "kMotorCurrentZeroVolts must have one entry per digit");
+static_assert(sizeof(kMotorCurrentVoltsPerAmp) / sizeof(kMotorCurrentVoltsPerAmp[0]) == kDigitCount,
+              "kMotorCurrentVoltsPerAmp must have one entry per digit");
+static_assert(sizeof(kServoChannel) / sizeof(kServoChannel[0]) == kDigitCount,
+              "kServoChannel must have one entry per digit");
+static_assert(sizeof(kPinFsr) / sizeof(kPinFsr[0]) == kGraspDigitCount,
+              "kPinFsr must have one entry per grasping digit");
+static_assert(sizeof(kPinContact) / sizeof(kPinContact[0]) == kGraspDigitCount,
+              "kPinContact must have one entry per grasping digit");
+
 }  // namespace board
 }  // namespace jensen

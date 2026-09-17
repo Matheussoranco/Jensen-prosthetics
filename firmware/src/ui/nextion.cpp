@@ -1,5 +1,6 @@
 #include "ui/nextion.h"
 
+#include <cmath>
 #include <cstdio>
 #include <cstring>
 
@@ -90,13 +91,18 @@ void NextionDisplay::update(const HandTelemetry& telemetry, uint32_t nowMillis) 
         sendValue("jAperture", aperture);
     }
 
-    const int16_t charge = static_cast<int16_t>(telemetry.stateOfCharge * 100.0f + 0.5f);
-    if (charge != lastCharge_) {
-        lastCharge_ = charge;
-        sendValue("jBattery", charge);
-        char volts[16];
-        std::snprintf(volts, sizeof(volts), "%.2fV", static_cast<double>(telemetry.batteryVolts));
-        sendText("tBattery", volts);
+    // BatteryMonitor reports NaN until the first ADC sample seeds it;
+    // casting NaN to int16_t is undefined, so hold the last display value
+    // instead of pushing garbage in the first control ticks.
+    if (!std::isnan(telemetry.batteryVolts) && !std::isnan(telemetry.stateOfCharge)) {
+        const int16_t charge = static_cast<int16_t>(telemetry.stateOfCharge * 100.0f + 0.5f);
+        if (charge != lastCharge_) {
+            lastCharge_ = charge;
+            sendValue("jBattery", charge);
+            char volts[16];
+            std::snprintf(volts, sizeof(volts), "%.2fV", static_cast<double>(telemetry.batteryVolts));
+            sendText("tBattery", volts);
+        }
     }
 
     const int16_t force = static_cast<int16_t>(telemetry.peakForce * 10.0f + 0.5f);

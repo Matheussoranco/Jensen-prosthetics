@@ -207,7 +207,15 @@ void loop() {
     // correctly, which a naive `now > last + period` comparison would not.
     const uint32_t elapsedMicros = nowMicros - g_lastControlMicros;
     if (elapsedMicros >= jensen::board::kControlPeriodMicros) {
-        g_lastControlMicros = nowMicros;
+        // Advance by the nominal period, not to `now`: stamping `last = now`
+        // accumulates the scheduling jitter of every tick as drift, so the
+        // 100 Hz loop slowly wanders. Catch-up keeps the phase; if we are
+        // more than a few periods behind (long stall), resync to `now`
+        // rather than executing a burst of back-to-back ticks.
+        g_lastControlMicros += jensen::board::kControlPeriodMicros;
+        if (nowMicros - g_lastControlMicros >= 5 * jensen::board::kControlPeriodMicros) {
+            g_lastControlMicros = nowMicros;
+        }
         const float dt = static_cast<float>(elapsedMicros) * 1e-6f;
 
         sampleInputs();
