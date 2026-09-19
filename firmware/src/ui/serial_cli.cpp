@@ -5,6 +5,7 @@
 #include <cstring>
 
 #include "board_config.h"
+#include "jensen/parse_numeric.h"
 
 namespace jensen {
 
@@ -78,6 +79,11 @@ void SerialCli::printPrompt() {
 void SerialCli::update(uint32_t nowMillis) {
     if (out_ == nullptr || hand_ == nullptr) return;
 
+    if (digitRunner_.active() && hand_->safety().requiresSafeTorqueOff()) {
+        endDigitCalibration(false);
+        out_->println(F("calibration aborted: severe fault"));
+    }
+
     // Bounded read per call: a wedged terminal must not stall the control loop.
     uint8_t budget = 64;
     while (out_->available() > 0 && budget-- > 0) {
@@ -86,8 +92,10 @@ void SerialCli::update(uint32_t nowMillis) {
         if (c == '\n') {
             line_[lineLength_] = '\0';
             out_->println();
-            if (lineLength_ > 0) handleLine(line_);
+            if (lineOverflow_) out_->println(F("rejected: line too long"));
+            else if (lineLength_ > 0) handleLine(line_);
             lineLength_ = 0;
+            lineOverflow_ = false;
             printPrompt();
             continue;
         }
@@ -101,6 +109,8 @@ void SerialCli::update(uint32_t nowMillis) {
         if (lineLength_ < kLineMax - 1) {
             line_[lineLength_++] = c;
             out_->print(c);
+        } else {
+            lineOverflow_ = true;
         }
     }
 
@@ -114,8 +124,12 @@ void SerialCli::handleLine(char* line) {
     char* tokens[kMaxTokens] = {};
     int count = 0;
     char* saved = nullptr;
-    for (char* token = strtok_r(line, " \t", &saved); token != nullptr && count < kMaxTokens;
+    for (char* token = strtok_r(line, " \t", &saved); token != nullptr;
          token = strtok_r(nullptr, " \t", &saved)) {
+        if (count == kMaxTokens) {
+            out_->println(F("rejected: too many arguments"));
+            return;
+        }
         tokens[count++] = token;
     }
     if (count == 0) return;
@@ -130,15 +144,35 @@ void SerialCli::handleLine(char* line) {
     const char* command = tokens[0];
 
     if (equals(command, "help") || equals(command, "?")) {
+        if (count != 1) {
+            out_->println(F("usage: help"));
+            return;
+        }
         printHelp();
     } else if (equals(command, "status")) {
+        if (count != 1) {
+            out_->println(F("usage: status"));
+            return;
+        }
         printStatus();
     } else if (equals(command, "config")) {
+        if (count != 1) {
+            out_->println(F("usage: config"));
+            return;
+        }
         printConfig();
     } else if (equals(command, "grips")) {
+        if (count != 1) {
+            out_->println(F("usage: grips"));
+            return;
+        }
         printGrips();
 
     } else if (equals(command, "telem")) {
+        if (count > 3) {
+            out_->println(F("usage: telem on|off [hz]"));
+            return;
+        }
         if (count >= 2) {
             bool enabled = false;
             if (parseBool(tokens[1], enabled)) {
@@ -151,10 +185,12 @@ void SerialCli::handleLine(char* line) {
             telemetryEnabled_ = !telemetryEnabled_;
         }
         if (count >= 3) {
-            const float hz = static_cast<float>(std::atof(tokens[2]));
-            if (hz > 0.0f && hz <= 200.0f) {
-                telemetryPeriodMillis_ = static_cast<uint32_t>(1000.0f / hz);
+            float hz = 0.0f;
+            if (!parseFiniteFloat(tokens[2], hz) || hz < 1.0f || hz > 50.0f) {
+                out_->println(F("telemetry rate must be 1..50 Hz"));
+                return;
             }
+            telemetryPeriodMillis_ = static_cast<uint32_t>(1000.0f / hz);
         }
         out_->printf("telemetry %s at %lu ms\r\n", telemetryEnabled_ ? "on" : "off",
                      static_cast<unsigned long>(telemetryPeriodMillis_));
@@ -165,10 +201,22 @@ void SerialCli::handleLine(char* line) {
             return;
         }
         if (equals(tokens[1], "next")) {
+            if (count != 2) {
+                out_->println(F("usage: grip [next|prev|<name>]"));
+                return;
+            }
             hand_->nextGrip();
         } else if (equals(tokens[1], "prev")) {
+            if (count != 2) {
+                out_->println(F("usage: grip [next|prev|<name>]"));
+                return;
+            }
             hand_->previousGrip();
-        } else if (equals(tokens[1], "enable") && count >= 4) {
+        } else if (equals(tokens[1], "enable")) {
+            if (count != 4) {
+                out_->println(F("usage: grip enable <name> on|off"));
+                return;
+            }
             GripId grip;
             bool enabled = false;
             if (!parseGrip(tokens[2], grip) || !parseBool(tokens[3], enabled)) {
@@ -181,6 +229,10 @@ void SerialCli::handleLine(char* line) {
             commitConfig("grip mask");
             return;
         } else {
+            if (count != 2) {
+                out_->println(F("usage: grip [next|prev|<name>]"));
+                return;
+            }
             GripId grip;
             if (!parseGrip(tokens[1], grip)) {
                 out_->println(F("unknown grip; try 'grips'"));
@@ -192,6 +244,10 @@ void SerialCli::handleLine(char* line) {
 
     } else if (equals(command, "pattern")) {
         if (count < 2 || equals(tokens[1], "status")) {
+            if (count > 2) {
+                out_->println(F("usage: pattern status|enable on|off|site <2|3> <baseline> <noise> <mvc>|train <grip>|clear <grip>|cancel"));
+                return;
+            }
             const PatternRecognizer& recognizer = hand_->patternRecognizer();
             out_->printf("pattern %s, %u sites, candidate %s, confidence %.2f%s\r\n",
                          working_.pattern.enabled ? "on" : "off",
@@ -199,7 +255,11 @@ void SerialCli::handleLine(char* line) {
                          GripLibrary::name(recognizer.candidate()),
                          static_cast<double>(recognizer.confidence()),
                          recognizer.training() ? ", TRAINING" : "");
-        } else if (equals(tokens[1], "enable") && count >= 3) {
+        } else if (equals(tokens[1], "enable")) {
+            if (count != 3) {
+                out_->println(F("usage: pattern enable on|off"));
+                return;
+            }
             bool enabled = false;
             if (!parseBool(tokens[2], enabled)) {
                 out_->println(F("usage: pattern enable on|off"));
@@ -207,16 +267,38 @@ void SerialCli::handleLine(char* line) {
             }
             working_.pattern.enabled = enabled;
             commitConfig("pattern recognition");
-        } else if (equals(tokens[1], "site") && count >= 6) {
-            const int site = std::atoi(tokens[2]);
-            if (site < 2 || site >= kPatternSiteCount) {
+        } else if (equals(tokens[1], "site")) {
+            if (count != 6) {
+                out_->println(F("usage: pattern site <2|3> <baseline> <noise> <mvc>"));
+                return;
+            }
+            long site = 0;
+            if (!parseBoundedLong(tokens[2], 2, kPatternSiteCount - 1, site)) {
                 out_->println(F("site must be 2 or 3 (0/1 are flexor/extensor)"));
                 return;
             }
+            // Field-by-field strict parse: strtof with endptr + isfinite +
+            // ADC range-check. The old std::atof accepted "nan", "inf",
+            // "12xyz" (as 12) and "" (as 0), letting NaN/inf flow into the
+            // calibration and then into clamp01().
+            float baseline = 0.0f, noise = 0.0f, mvc = 0.0f;
+            if (!parseFiniteFloat(tokens[3], baseline) || baseline < 0.0f ||
+                baseline > 4095.0f) {
+                out_->println(F("rejected: baseline must be 0..4095 counts"));
+                return;
+            }
+            if (!parseFiniteFloat(tokens[4], noise) || noise < 0.0f || noise > 4095.0f) {
+                out_->println(F("rejected: noise must be 0..4095 counts"));
+                return;
+            }
+            if (!parseFiniteFloat(tokens[5], mvc) || mvc < 0.0f || mvc > 4095.0f) {
+                out_->println(F("rejected: mvc must be 0..4095 counts"));
+                return;
+            }
             EmgCalibration calibration{};
-            calibration.baselineCounts = static_cast<float>(std::atof(tokens[3]));
-            calibration.noiseCounts = static_cast<float>(std::atof(tokens[4]));
-            calibration.mvcCounts = static_cast<float>(std::atof(tokens[5]));
+            calibration.baselineCounts = baseline;
+            calibration.noiseCounts = noise;
+            calibration.mvcCounts = mvc;
             calibration.valid = true;
             if (!calibration.isUsable()) {
                 out_->println(F("rejected: mvc must clearly exceed the noise floor"));
@@ -224,14 +306,22 @@ void SerialCli::handleLine(char* line) {
             }
             working_.emgAux[site - 2] = calibration;
             commitConfig("pattern site calibration");
-        } else if (equals(tokens[1], "train") && count >= 3) {
+        } else if (equals(tokens[1], "train")) {
+            if (count != 3) {
+                out_->println(F("usage: pattern train <grip>"));
+                return;
+            }
             GripId grip;
             if (!parseGrip(tokens[2], grip) || !hand_->startPatternTraining(grip)) {
                 out_->println(F("training rejected; enable pattern mode, choose a non-rest grip, and wake the hand"));
                 return;
             }
             out_->println(F("relax during settle, then hold the intended contraction until confirmed"));
-        } else if (equals(tokens[1], "clear") && count >= 3) {
+        } else if (equals(tokens[1], "clear")) {
+            if (count != 3) {
+                out_->println(F("usage: pattern clear <grip>"));
+                return;
+            }
             GripId grip;
             if (!parseGrip(tokens[2], grip)) {
                 out_->println(F("unknown grip"));
@@ -240,6 +330,10 @@ void SerialCli::handleLine(char* line) {
             working_.pattern.templates[static_cast<uint8_t>(grip)] = PatternTemplate{};
             commitConfig("pattern template");
         } else if (equals(tokens[1], "cancel")) {
+            if (count != 2) {
+                out_->println(F("usage: pattern cancel"));
+                return;
+            }
             hand_->cancelPatternTraining();
             out_->println(F("pattern training cancelled"));
         } else {
@@ -247,6 +341,10 @@ void SerialCli::handleLine(char* line) {
         }
 
     } else if (equals(command, "hold")) {
+        if (count > 2) {
+            out_->println(F("usage: hold [on|off]"));
+            return;
+        }
         bool enabled = (hand_->telemetry().mode != ControlMode::Hold);
         if (count >= 2 && !parseBool(tokens[1], enabled)) {
             out_->println(F("usage: hold [on|off]"));
@@ -256,34 +354,55 @@ void SerialCli::handleLine(char* line) {
         out_->printf("hold %s\r\n", enabled ? "on" : "off");
 
     } else if (equals(command, "park")) {
+        if (count > 2) {
+            out_->println(F("usage: park [on|off]"));
+            return;
+        }
         bool enabled = (hand_->telemetry().mode != ControlMode::SafeTorqueOff);
         if (count >= 2 && !parseBool(tokens[1], enabled)) {
             out_->println(F("usage: park [on|off]"));
             return;
         }
         hand_->park(enabled);
-        out_->printf("park %s\r\n", enabled ? "on" : "off");
+        out_->printf("park %s\r\n", hand_->modes().mode() == ControlMode::SafeTorqueOff ? "on" : "off");
 
     } else if (equals(command, "open")) {
+        if (count != 1) {
+            out_->println(F("usage: open"));
+            return;
+        }
         hand_->commandAperture(0.0f);
         out_->println(F("opening"));
     } else if (equals(command, "close")) {
+        if (count != 1) {
+            out_->println(F("usage: close"));
+            return;
+        }
         hand_->commandAperture(1.0f);
         out_->println(F("closing"));
     } else if (equals(command, "aperture")) {
-        if (count < 2) {
+        if (count != 2) {
             out_->println(F("usage: aperture <0..1>"));
             return;
         }
-        const float value = static_cast<float>(std::atof(tokens[1]));
+        float value = 0.0f;
+        if (!parseFiniteFloat(tokens[1], value) || value < 0.0f || value > 1.0f) {
+            out_->println(F("usage: aperture <0..1>"));
+            return;
+        }
         hand_->commandAperture(value);
         out_->printf("aperture %.3f\r\n", static_cast<double>(value));
     } else if (equals(command, "wrist")) {
-        if (count < 2) {
+        if (count != 2) {
             out_->println(F("usage: wrist <0..1>"));
             return;
         }
-        hand_->setWristTarget(static_cast<float>(std::atof(tokens[1])));
+        float value = 0.0f;
+        if (!parseFiniteFloat(tokens[1], value) || value < 0.0f || value > 1.0f) {
+            out_->println(F("usage: wrist <0..1>"));
+            return;
+        }
+        hand_->setWristTarget(value);
         out_->println(F("ok"));
 
     } else if (equals(command, "cal")) {
@@ -292,23 +411,39 @@ void SerialCli::handleLine(char* line) {
             return;
         }
         if (equals(tokens[1], "emg")) {
+            if (count != 2) {
+                out_->println(F("usage: cal emg | cal fsr | cal digit <name> | cal abort"));
+                return;
+            }
             hand_->startEmgCalibration();
             out_->println(F("electrode calibration started — follow the prompts"));
         } else if (equals(tokens[1], "abort")) {
+            if (count != 2) {
+                out_->println(F("usage: cal emg | cal fsr | cal digit <name> | cal abort"));
+                return;
+            }
             hand_->abortCalibration();
             out_->println(F("aborted"));
         } else if (equals(tokens[1], "fsr")) {
+            if (count != 2) {
+                out_->println(F("usage: cal emg | cal fsr | cal digit <name> | cal abort"));
+                return;
+            }
             hand_->tareForceSensors();
             refreshWorkingConfig();
             out_->println(F("fingertip sensors tared (hand must be touching nothing)"));
-        } else if (equals(tokens[1], "digit") && count >= 3) {
+        } else if (equals(tokens[1], "digit")) {
+            if (count != 3) {
+                out_->println(F("usage: cal emg | cal fsr | cal digit <name> | cal abort"));
+                return;
+            }
             beginDigitCalibration(tokens[2]);
         } else {
             out_->println(F("usage: cal emg | cal fsr | cal digit <name> | cal abort"));
         }
 
     } else if (equals(command, "set")) {
-        if (count < 3) {
+        if (count != 3) {
             out_->println(F("usage: set <key> <value>   (see 'config')"));
             return;
         }
@@ -319,6 +454,10 @@ void SerialCli::handleLine(char* line) {
         }
 
     } else if (equals(command, "side")) {
+        if (count > 2) {
+            out_->println(F("usage: side left|right"));
+            return;
+        }
         if (count < 2) {
             out_->printf("side %s\r\n", handSideName(working_.side));
             return;
@@ -335,6 +474,10 @@ void SerialCli::handleLine(char* line) {
         commitConfig("side");
 
     } else if (equals(command, "save")) {
+        if (count != 1) {
+            out_->println(F("usage: save"));
+            return;
+        }
         working_ = hand_->config();
         if (store_ != nullptr && store_->save(working_)) {
             out_->printf("saved to slot %u\r\n", static_cast<unsigned>(store_->activeSlot()));
@@ -343,6 +486,10 @@ void SerialCli::handleLine(char* line) {
         }
 
     } else if (equals(command, "load")) {
+        if (count != 1) {
+            out_->println(F("usage: load"));
+            return;
+        }
         HandConfig loaded{};
         if (store_ != nullptr && store_->load(loaded)) {
             working_ = loaded;
@@ -353,16 +500,28 @@ void SerialCli::handleLine(char* line) {
         }
 
     } else if (equals(command, "defaults")) {
+        if (count > 2) {
+            out_->println(F("usage: defaults [left|right]"));
+            return;
+        }
         HandSide side = working_.side;
         if (count >= 2) {
             if (equals(tokens[1], "left")) side = HandSide::Left;
             else if (equals(tokens[1], "right")) side = HandSide::Right;
+            else {
+                out_->println(F("usage: defaults [left|right]"));
+                return;
+            }
         }
         working_ = HandConfig::defaults(side);
         hand_->applyConfig(working_);
         out_->println(F("factory defaults applied (not saved — use 'save')"));
 
     } else if (equals(command, "erase")) {
+        if (count != 1) {
+            out_->println(F("usage: erase"));
+            return;
+        }
         if (store_ != nullptr && store_->erase()) {
             out_->println(F("stored configuration erased; reboot to come up on defaults"));
         } else {
@@ -370,6 +529,10 @@ void SerialCli::handleLine(char* line) {
         }
 
     } else if (equals(command, "reboot")) {
+        if (count != 1) {
+            out_->println(F("usage: reboot"));
+            return;
+        }
         out_->println(F("rebooting"));
         out_->flush();
         ESP.restart();
@@ -413,15 +576,20 @@ bool SerialCli::applySetting(const char* key, const char* value) {
         return parseBool(value, working_.pattern.enabled);
     }
     if (equals(key, "current.mask")) {
-        char* end = nullptr;
-        const unsigned long mask = std::strtoul(value, &end, 0);
-        if (end == value || *end != '\0' || mask >= (1u << kDigitCount)) return false;
+        // 7 channels -> valid masks are 0<=m<128 (0x00..0x7F). strtol with
+        // full-consume + range check rejects leading/trailing spaces, empty
+        // strings, wrap-around ("-1", huge hex) and ERANGE overflow.
+        static_assert(kDigitCount == 7, "mask range assumes 7 digits");
+        long mask = 0;
+        if (!parseBoundedLong(value, 0, 127, mask, 0)) return false;
+        // Keep generic for future digit counts: 127 == (1<<kDigitCount)-1.
+        if (mask > static_cast<long>((1u << kDigitCount) - 1)) return false;
         working_.motorCurrent.presentMask = static_cast<uint8_t>(mask);
         return true;
     }
     if (equals(key, "pattern.sites")) {
-        const int sites = std::atoi(value);
-        if (sites < 3 || sites > kPatternSiteCount) return false;
+        long sites = 0;
+        if (!parseBoundedLong(value, 3, kPatternSiteCount, sites)) return false;
         working_.pattern.siteCount = static_cast<uint8_t>(sites);
         return true;
     }
@@ -432,10 +600,12 @@ bool SerialCli::applySetting(const char* key, const char* value) {
         return true;
     }
 
-    return applyFloatSetting(key, static_cast<float>(std::atof(value)));
+    float number = 0.0f;
+    return parseFiniteFloat(value, number) && applyFloatSetting(key, number);
 }
 
 bool SerialCli::applyFloatSetting(const char* key, float value) {
+    if (!std::isfinite(value)) return false;
     // Electrode conditioning
     if (equals(key, "emg.attack"))       { working_.emg.attackSeconds = value;  return true; }
     if (equals(key, "emg.release"))      { working_.emg.releaseSeconds = value; return true; }
@@ -505,6 +675,11 @@ void SerialCli::beginDigitCalibration(const char* digitName) {
         return;
     }
     if (hand_ == nullptr || servos_ == nullptr) return;
+    if (hand_->safety().requiresSafeTorqueOff()) {
+        out_->println(F("calibration blocked: severe fault"));
+        return;
+    }
+    wasParkedBeforeCalibration_ = hand_->modes().mode() == ControlMode::SafeTorqueOff;
 
     working_ = hand_->config();
     digitRunner_.begin(digit, working_.digits[index(digit)]);
@@ -531,32 +706,69 @@ void SerialCli::beginDigitCalibration(const char* digitName) {
 void SerialCli::handleDigitCalibration(int argc, char** argv) {
     const char* command = argv[0];
 
-    if (equals(command, "jog") && argc >= 2) {
-        const int32_t delta = std::atol(argv[1]);
+    if (equals(command, "jog")) {
+        if (argc != 2) {
+            out_->println(F("usage: jog <us>"));
+            return;
+        }
+        long delta = 0;
+        if (!parseBoundedLong(argv[1], -32768, 32767, delta)) {
+            out_->println(F("invalid jog delta"));
+            return;
+        }
         const uint16_t pulse = digitRunner_.jog(static_cast<int16_t>(delta));
         servos_->write(board::kServoChannel[index(digitRunner_.digit())], pulse);
         out_->printf("%u us\r\n", static_cast<unsigned>(pulse));
 
-    } else if (equals(command, "pulse") && argc >= 2) {
-        digitRunner_.setPulseUs(static_cast<uint16_t>(std::atol(argv[1])));
+    } else if (equals(command, "pulse")) {
+        if (argc != 2) {
+            out_->println(F("usage: pulse <us>"));
+            return;
+        }
+        long pulse = 0;
+        if (!parseBoundedLong(argv[1], 0, 65535, pulse)) {
+            out_->println(F("invalid pulse width"));
+            return;
+        }
+        digitRunner_.setPulseUs(static_cast<uint16_t>(pulse));
         servos_->write(board::kServoChannel[index(digitRunner_.digit())], digitRunner_.pulseUs());
         out_->printf("%u us\r\n", static_cast<unsigned>(digitRunner_.pulseUs()));
 
     } else if (equals(command, "open")) {
+        if (argc != 1) {
+            out_->println(F("usage: open"));
+            return;
+        }
         digitRunner_.markOpen();
         out_->printf("open = %u us\r\n", static_cast<unsigned>(digitRunner_.pulseUs()));
 
     } else if (equals(command, "closed")) {
+        if (argc != 1) {
+            out_->println(F("usage: closed"));
+            return;
+        }
         digitRunner_.markClosed();
         out_->printf("closed = %u us\r\n", static_cast<unsigned>(digitRunner_.pulseUs()));
 
     } else if (equals(command, "save")) {
+        if (argc != 1) {
+            out_->println(F("usage: save"));
+            return;
+        }
         endDigitCalibration(true);
 
     } else if (equals(command, "cancel")) {
+        if (argc != 1) {
+            out_->println(F("usage: cancel"));
+            return;
+        }
         endDigitCalibration(false);
 
     } else if (equals(command, "help") || equals(command, "?")) {
+        if (argc != 1) {
+            out_->println(F("jog <us> | pulse <us> | open | closed | save | cancel"));
+            return;
+        }
         out_->println(F("jog <us> | pulse <us> | open | closed | save | cancel"));
 
     } else {
@@ -582,6 +794,8 @@ void SerialCli::endDigitCalibration(bool save) {
 
     digitRunner_.abort();
     servos_->write(board::kServoChannel[index(digit)], 0);
+    servos_->setOutputEnabled(false);
+    servos_->setRailEnabled(false);
 
     if (save) {
         hand_->applyConfig(working_);
@@ -592,7 +806,7 @@ void SerialCli::endDigitCalibration(bool save) {
     }
 
     // Hand the bus back. The controller re-energises on its own next tick.
-    hand_->park(false);
+    hand_->park(wasParkedBeforeCalibration_);
 }
 
 // --- Reporting ---------------------------------------------------------------

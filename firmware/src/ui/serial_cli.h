@@ -68,6 +68,8 @@ private:
     static constexpr uint8_t kLineMax = 96;
     char line_[kLineMax] = {};
     uint8_t lineLength_ = 0;
+    bool lineOverflow_ = false;
+    bool wasParkedBeforeCalibration_ = true;
 
     bool telemetryEnabled_ = false;
     uint32_t telemetryPeriodMillis_ = 100;

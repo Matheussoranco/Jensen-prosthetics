@@ -10,9 +10,16 @@
 namespace jensen {
 
 /// Clamp `v` into the inclusive range [lo, hi].
+///
+/// NaN-safe: NaN can never satisfy a comparison, so the naive
+/// `v < lo ? lo : (v > hi ? hi : v)` propagates NaN (clamp01(NaN) == NaN,
+/// which then poisons digit closure / EMG activation / aperture). Here any
+/// unordered input falls back to `lo`.
 template <typename T>
 constexpr T clamp(T v, T lo, T hi) {
-    return v < lo ? lo : (v > hi ? hi : v);
+    if (!(v >= lo)) return lo;  // covers v < lo and NaN
+    if (!(v <= hi)) return hi;  // covers v > hi (+inf); NaN already returned
+    return v;
 }
 
 /// Clamp to the unit interval — the range used for every normalized quantity
