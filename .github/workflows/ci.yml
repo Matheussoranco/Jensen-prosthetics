@@ -1,0 +1,23 @@
+name: Host software checks only
+
+on:
+  push:
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+      - uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065 # v5.6.0
+        with:
+          python-version: '3.12'
+      - name: Host control-core regression suite
+        run: python firmware/tools/run_core_tests.py
+      - name: Application syntax against declaration stubs
+        run: python firmware/tools/check_app_syntax.py

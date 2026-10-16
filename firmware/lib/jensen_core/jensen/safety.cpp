@@ -154,11 +154,11 @@ void SafetySupervisor::set(FaultFlag flag, bool asserted) {
 
 bool SafetySupervisor::requiresSafeTorqueOff() const {
     // Faults where continuing to drive servos is either useless or unsafe.
-    // Over-force and motor stall park the hand: both mean the integrator
-    // must not keep winding into a load it cannot move — torque comes off
-    // (updateOutputs cuts pulses) and updateDrive relaxes to open.
+    // Over-force removes torque from the whole hand. A directly measured
+    // motor stall is isolated by MotorCurrentGuard and updateOutputs per
+    // digit; powering down the other digits would release a held object.
     constexpr uint16_t kSevere = kFaultBatteryCritical | kFaultServoBus | kFaultDigitCalibration |
-                                 kFaultOverForce | kFaultMotorStall;
+                                 kFaultOverForce;
     return (faults_ & kSevere) != 0;
 }
 

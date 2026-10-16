@@ -1525,6 +1525,29 @@ TEST(controller_motor_stall_isolates_only_the_affected_servo) {
     CHECK(rig.hand.outputs().servoRailEnabled);
 }
 
+TEST(controller_simultaneous_motor_stalls_keep_unaffected_digits_holding) {
+    Rig rig;
+    HandConfig config = calibratedConfig();
+    config.motorCurrent.presentMask =
+        static_cast<uint8_t>((1u << index(Digit::Index)) | (1u << index(Digit::Middle)));
+    config.motorCurrent.tripAmps = 2.0f;
+    config.motorCurrent.tripSeconds = 0.05f;
+    rig.reset(config);
+    rig.run(1.0f, 3.0f, 3.0f);
+    rig.in.motorCurrentAmps[index(Digit::Index)] = 3.0f;
+    rig.in.motorCurrentAmps[index(Digit::Middle)] = 3.0f;
+    rig.run(0.5f, 600.0f, 3.0f);
+
+    CHECK(rig.hand.telemetry().motorStalled[index(Digit::Index)]);
+    CHECK(rig.hand.telemetry().motorStalled[index(Digit::Middle)]);
+    CHECK_FALSE(rig.hand.telemetry().motorStalled[index(Digit::Ring)]);
+    CHECK(rig.hand.telemetry().faults & kFaultMotorStall);
+    CHECK_EQ(rig.hand.outputs().pulseUs[index(Digit::Index)], 0);
+    CHECK_EQ(rig.hand.outputs().pulseUs[index(Digit::Middle)], 0);
+    CHECK_GT(rig.hand.outputs().pulseUs[index(Digit::Ring)], 0);
+    CHECK(rig.hand.outputs().servoRailEnabled);
+}
+
 TEST(controller_pattern_mode_selects_a_trained_grip_without_cocontraction) {
     Rig rig;
     HandConfig config = calibratedConfig();
