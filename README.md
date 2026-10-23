@@ -4,6 +4,14 @@
 
 [![License: CC BY-NC-SA 4.0](https://img.shields.io/badge/License-CC%20BY--NC--SA%204.0-lightgrey.svg)](LICENSE)
 
+> **Project status: design stage.** The Jensen Hand has **not been built**.
+> No physical prototype exists, and no bench, force, durability or clinical
+> verification has been performed. The CAD assembly and the firmware have never
+> been exercised together on hardware, and where they disagree (see
+> [`hardware/BOM.md`](hardware/BOM.md#cad-vs-firmware-discrepancies)) the
+> disagreement is documented rather than resolved. Treat every number in this
+> repository as design intent, not measured performance.
+
 ---
 
 ## Abstract
@@ -70,8 +78,8 @@ see [Attribution](#8-license-and-attribution) below.
                  └────────────────────┘
                             │
                             ▼
-   ESP32  ──I2C──▶ PCA9685 (16-ch PWM) ──▶ MG996R × N (finger/thumb tendons)
-     │                                └──▶ SG90 × N (auxiliary joints)
+   ESP32  ──I2C──▶ PCA9685 (16-ch PWM) ──▶ SG90 × 5 (four fingers + thumb, per CAD)
+     │                                └──▶ MG996R × 1 (wrist, per CAD)
      │
      ├──ADC──▶ FSR400 × N (fingertip grip force) ── via LM393 conditioning
      ├──UART──▶ Nextion 2.4" HMI (status / configuration display)
@@ -109,6 +117,28 @@ through to the digits. The forearm shell (`Foreamr_V1.2`, exported as four
 STL bodies from its cut/revolve features) houses the electronics and
 battery and mounts to the palm assembly.
 
+**Transmission and kinematics (read from the CAD).** The assembly contains
+ten ball-jointed tie rods (`Tie Rod v3`, each with a `Ball` end) and no
+springs, elastic parts or cord, and the renders show rigid curved links running
+along each finger. The transmission therefore appears to be servo horn → rigid
+push–pull link chain rather than a flexible tendon. It can drive a digit in both
+directions, so no return spring is needed, but it has no mechanical compliance:
+a finger that meets an object, or a badly set endpoint, loads the servo and the
+links directly. That is the reason the firmware limits closure from fingertip
+force, guards the servo endpoints and backs off under sustained load. The word
+"tendon" in part names (`Finger_TendonLink`) and in the firmware documentation
+refers to this servo-to-finger transmission. This reading comes from the CAD
+geometry and standard design practice; it has not been checked on a built hand.
+
+Each finger (index to pinky) has one input degree of freedom: its servo moves
+one link chain that couples the proximal, middle and distal phalanx plates
+(underactuated; the angle ratio between the joints is fixed by the link
+geometry, which has not been measured). The four finger servos sit in a row on
+the palm servo plates at the finger pitch. The thumb has two phalanges
+(proximal and distal) on a dedicated CMC base plate, which provides the
+opposition axis; the CAD models one servo at the thumb (see
+[Section 5](#5-actuation)).
+
 **Fasteners.** The design uses M3 hardware throughout: DIN 912 and DIN 7991
 socket-head screws in multiple lengths, DIN 125 washers, DIN 985 nyloc
 nuts, M3 brass heat-set inserts (3–8 mm), and M3 hex spacers (12 mm and
@@ -116,11 +146,24 @@ nuts, M3 brass heat-set inserts (3–8 mm), and M3 hex spacers (12 mm and
 
 ## 5. Actuation
 
-| Actuator | Role | Notes |
-|---|---|---|
-| MG996R (metal-gear, ~10 kg·cm) | Primary finger/thumb tendon pull | Mounted in the palm/servo-plate bank |
-| SG90 (micro servo) | Auxiliary/secondary joint actuation | Lower load-bearing joints |
-| PCA9685 | 16-channel, 12-bit I2C PWM driver | Offloads servo timing from the ESP32; single I2C bus |
+| Actuator | Qty in CAD | Role in CAD | Notes |
+|---|---|---|---|
+| SG90 micro servo | 5 | Four finger servos (one per finger, aligned with the MCP plates) and one at the thumb | Plastic gears; about 1.8 kg·cm at 4.8 V and about 0.65 A stall (nominal, clone parts vary) |
+| MG996R (metal gear) | 1 | Its output horn (`Arm 1`) attaches to the palm base, so it is positioned as the wrist rotator | About 10 kg·cm and about 2.5 A stall (nominal) |
+| PCA9685 | 1 | 16-channel, 12-bit I2C PWM driver | Offloads servo timing from the ESP32; single I2C bus |
+
+**The CAD and the firmware do not match, and this has not been resolved.** The
+firmware reserves seven PCA9685 channels (thumb flexion, thumb opposition,
+index, middle, ring, pinky, wrist), and its power, current-trip and calibration
+guidance was written assuming MG996R-class servos on the digits. The CAD models
+six servos (five SG90 and one MG996R) and none is dedicated to thumb opposition.
+Because nothing has been built, a builder must decide the actuator type per
+channel and whether the thumb gets a second servo, then re-size the supply and
+`current.trip` for that choice. SG90s are far weaker than MG996Rs, so the grasp
+force gates in [`verification/README.md`](verification/README.md) (for example
+45 N power grasp) should not be assumed reachable with them. See
+[`hardware/BOM.md`](hardware/BOM.md) for the full parts list and the discrepancy
+table.
 
 Driving servos through a PCA9685 rather than directly from ESP32 GPIO
 timers frees the microcontroller from software PWM and allows all channels
@@ -190,6 +233,7 @@ Jensen-prosthetics/
 │   ├── tools/               test runner, syntax check, telemetry monitor
 │   └── docs/                Nextion HMI component specification
 ├── hardware/
+│   ├── BOM.md               bill of materials, counted from the STEP assembly
 │   ├── assembly/
 │   │   └── Jensen_Hand_Assembly.step   full hand assembly, open STEP
 │   ├── components/          off-the-shelf reference models (metadata-cleaned)
@@ -253,14 +297,15 @@ Physical and source-release claims remain evidence gates, not unchecked prose.
 [`verification/README.md`](verification/README.md) defines the bench, battery,
 FSR, stall, blinded pattern, grasp-force, 300,000-cycle durability, and native
 SolidWorks review procedures. `verification/verify_campaign.py` returns success
-only for a complete passing device campaign. No passing physical campaign or
-native SolidWorks files are included yet, so the project does not claim those
-results.
+only for a complete passing device campaign. The hand has not been built, so no
+physical campaign has been run and none passes. Native SolidWorks files are not
+included either, so the project does not claim those results.
 
 ## 10. Disclaimer
 
-This is a research/hobbyist hardware project, **not a certified medical
-device**. It has not undergone clinical testing or regulatory review. Do
+The hand described here has not been built or tested. This is a
+research/hobbyist hardware project, **not a certified medical device**. It has
+not undergone clinical testing or regulatory review. Do
 not use as a substitute for a properly fitted, clinically supervised
 prosthesis without appropriate professional oversight.
 

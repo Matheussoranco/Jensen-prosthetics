@@ -6,6 +6,13 @@ calibration procedure.
 
 > **Not a medical device.** This firmware has not undergone clinical testing
 > or regulatory review. See [Safety](#safety) before putting it on a person.
+>
+> **Never run on a physical hand.** The hand has not been built. The control core
+> passes its host test suite against synthetic inputs, but this firmware has not
+> driven real servos or read real electrodes, and the bring-up and calibration
+> procedures below are written but unexercised. The CAD models SG90 servos on the
+> fingers while this firmware was written for MG996R-class servos; see
+> [`../hardware/BOM.md`](../hardware/BOM.md#cad-vs-firmware-discrepancies).
 
 ---
 
@@ -159,7 +166,10 @@ a wrong ratio is the difference between "charged" and "park the hand".
 **Servo power.** MG996R stall current is ~2.5 A each. Do not power the servo
 rail from the ESP32 board's regulator; it comes from the buck converter, and
 ground must be common. Bulk capacitance across the servo rail (≥ 1000 µF)
-keeps rail sag from resetting the ESP32 when several digits move at once.
+keeps rail sag from resetting the ESP32 when several digits move at once. The
+stall figure above is for MG996R; the CAD models SG90s on the fingers (about
+0.65 A stall, nominal). Size the supply and `current.trip` for the servos you
+actually fit.
 
 ## 5. Bringing up a new hand
 
