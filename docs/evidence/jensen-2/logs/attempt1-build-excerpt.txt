@@ -1,0 +1,27 @@
+Tool Manager: Installing espressif/toolchain-xtensa-esp32 @ 8.4.0+2021r2-patch5
+Tool Manager: Installing platformio/framework-arduinoespressif32 @ ~3.20017.0
+Tool Manager: Installing platformio/tool-esptoolpy @ ~2.41100.0
+Tool Manager: Installing platformio/tool-scons @ ~4.41101.0
+Library Manager: Installing adafruit/Adafruit PWM Servo Driver Library @ 3.0.3
+Library Manager: Installing Adafruit BusIO
+PLATFORM: Espressif 32 (6.13.0) > Espressif ESP32 Dev Module
+HARDWARE: ESP32 240MHz, 320KB RAM, 4MB Flash
+PACKAGES: 
+ - framework-arduinoespressif32 @ 3.20017.241212+sha.dcc1105b 
+ - tool-esptoolpy @ 2.41100.260830 (4.11.0) 
+ - toolchain-xtensa-esp32 @ 8.4.0+2021r2-patch5
+Dependency Graph
+|-- Adafruit PWM Servo Driver Library @ 3.0.3
+|-- Adafruit BusIO @ 1.17.4
+|-- Preferences @ 2.0.0
+|-- Wire @ 2.0.0
+|-- jensen_core
+Building .pio/build/esp32dev/bootloader.bin
+RAM:   [=         ]   8.2% (used 26804 bytes from 327680 bytes)
+Flash: [===       ]  28.1% (used 368613 bytes from 1310720 bytes)
+Building .pio/build/esp32dev/firmware.bin with action:
+Building .pio/build/esp32dev/firmware.bin
+========================= [SUCCESS] Took 49.96 seconds =========================
+esp32dev       SUCCESS   00:00:49.955
+RAM:   [=         ]   8.2% (used 26804 bytes from 327680 bytes)
+Flash: [===       ]  28.1% (used 368613 bytes from 1310720 bytes)
