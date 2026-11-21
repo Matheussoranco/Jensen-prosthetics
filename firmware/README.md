@@ -110,9 +110,14 @@ pio run -e esp32dev -t upload    # flash
 pio device monitor               # serial console (115200 8N1)
 ```
 
-Dependencies resolve automatically (`Adafruit PWM Servo Driver`). Set
-handedness at build time in `platformio.ini` via `JENSEN_DEFAULT_SIDE_RIGHT`;
-this only seeds the factory defaults, and a stored calibration overrides it.
+Dependencies resolve automatically, at exact pinned versions:
+`espressif32@6.13.0` (Arduino-ESP32 core 2.0.17), Adafruit PWM Servo Driver
+3.0.3 and Adafruit BusIO 1.17.4. The code uses the **core 2.x** API
+(`ledcSetup`/`ledcAttachPin`, `esp_task_wdt_init(seconds, panic)`). The
+espressif32 7.x/8.x platforms ship core 3.x, where those calls were removed, so
+moving the platform pin means porting those calls first. Set handedness at
+build time in `platformio.ini` via `JENSEN_DEFAULT_SIDE_RIGHT`; this only seeds
+the factory defaults, and a stored calibration overrides it.
 
 ### Tests
 
@@ -127,6 +132,14 @@ python tools/check_app_syntax.py          # type-check src/ with no toolchain
 stubs — it catches signature and include errors in seconds, but only
 `pio run -e esp32dev` produces a flashable image or verifies the real library
 APIs.
+
+CI runs that real build on every push, in the `target-build` job of
+`.github/workflows/ci.yml`. The job is **compile only**: it never uploads or
+opens a serial monitor. It records the resolved toolchain and library versions
+and the SHA-256 of each image, and keeps the images as a downloadable CI
+artifact. A green target build means the firmware compiles and links against
+the real framework. It says nothing about behaviour on hardware; that still
+needs the bench campaign.
 
 ## 4. Wiring
 

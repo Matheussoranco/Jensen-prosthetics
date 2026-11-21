@@ -1,0 +1,13 @@
+# attempt 1 (cold package cache): digests from the build-record step
+148b959cbff1c38aa8e1d5c0ba9d612c54997b945e56a63f41223eef650653a1  3072  partitions.bin
+35152ddd39b357e0bc8f9c85bc8c55d89d777b04cf2d64e8d97e0b2903262442  8763440  firmware.elf
+3d234a7471f67b013686dabd4dee7c1fa915c9928463616a94bc9297acf1abf8  17536  bootloader.bin
+eccfa70fb404fa373e82040dd5a6967b09d5774c9feb8c2bd6b1b2aa0e26f098  368976  firmware.bin
+
+# attempt 2 (restored cache, different runner): digests
+148b959cbff1c38aa8e1d5c0ba9d612c54997b945e56a63f41223eef650653a1  3072  partitions.bin
+35152ddd39b357e0bc8f9c85bc8c55d89d777b04cf2d64e8d97e0b2903262442  8763440  firmware.elf
+3d234a7471f67b013686dabd4dee7c1fa915c9928463616a94bc9297acf1abf8  17536  bootloader.bin
+eccfa70fb404fa373e82040dd5a6967b09d5774c9feb8c2bd6b1b2aa0e26f098  368976  firmware.bin
+
+RESULT: all 4 identical
