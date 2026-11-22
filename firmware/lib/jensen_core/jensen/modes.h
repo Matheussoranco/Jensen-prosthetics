@@ -84,6 +84,10 @@ private:
     /// Set when the user parks the hand by hand, so a fault clearing does not
     /// silently re-energise the servos.
     bool userParked_ = false;
+    /// Latched when boot self-test fails (e.g. structurally invalid config), so
+    /// subsequent setFaults(false, false) ticks or button presses cannot exit
+    /// SafeTorqueOff without a fresh reset/boot.
+    bool selfTestFailed_ = false;
 
     float idleTimeout_ = 20.0f;
     float idleTimer_ = 0.0f;

@@ -949,6 +949,14 @@ TEST(modes_self_test_failure_parks_the_hand) {
     modes.dispatch(SystemEvent::SelfTestFailed);
     CHECK_EQ(static_cast<int>(modes.mode()), static_cast<int>(ControlMode::SafeTorqueOff));
     CHECK_FALSE(modes.drivesServos());
+    // Regression (#4): subsequent fault-clear ticks and button unpark attempts
+    // must not re-energise servos after a failed boot self-test.
+    modes.setFaults(false, false);
+    CHECK_EQ(static_cast<int>(modes.mode()), static_cast<int>(ControlMode::SafeTorqueOff));
+    CHECK_FALSE(modes.drivesServos());
+    modes.dispatch(ButtonEvent::VeryLongPress);
+    CHECK_EQ(static_cast<int>(modes.mode()), static_cast<int>(ControlMode::SafeTorqueOff));
+    CHECK_FALSE(modes.drivesServos());
 }
 
 TEST(modes_hold_toggles) {
@@ -1656,6 +1664,193 @@ TEST(controller_telemetry_is_populated) {
     CHECK_NEAR(t.forceTarget, rig.hand.config().gripForce.targetNewtons *
                                   rig.hand.config().gripForceScale[static_cast<uint8_t>(t.grip)],
                0.01);
+}
+
+// =============================================================================
+// profile-aware fault behavior, invalid calibration & timing discontinuities (#4)
+// =============================================================================
+
+TEST(profile_cad_without_thumb_opposition_or_current_channels_operates_safely) {
+    // Design-stage CAD BOM profile: 5 finger/thumb servos (no ThumbRot opposition),
+    // no wrist populated yet, and no fitted current sensing channels (presentMask == 0).
+    Rig rig;
+    HandConfig config = calibratedConfig();
+    config.digits[index(Digit::ThumbRot)].enabled = false;
+    config.digits[index(Digit::Wrist)].enabled = false;
+    config.motorCurrent.presentMask = 0;
+    CHECK(config.isValid());
+    CHECK(config.digitsCalibrated());
+
+    rig.reset(config);
+    rig.run(1.0f, 3.0f, 3.0f);
+    CHECK_EQ(static_cast<int>(rig.hand.telemetry().mode), static_cast<int>(ControlMode::Active));
+    CHECK_EQ(rig.hand.telemetry().faults, 0);
+
+    // Inject high current values on every channel while presentMask == 0:
+    // unfitted current channels must never fabricate a stall fault.
+    for (uint8_t i = 0; i < kDigitCount; ++i) rig.in.motorCurrentAmps[i] = 5.0f;
+    rig.run(0.6f, 600.0f, 3.0f);
+
+    CHECK_EQ(rig.hand.telemetry().faults & kFaultMotorStall, 0);
+    CHECK_EQ(rig.hand.outputs().pulseUs[index(Digit::ThumbRot)], 0);
+    CHECK_EQ(rig.hand.outputs().pulseUs[index(Digit::Wrist)], 0);
+    CHECK_GT(rig.hand.outputs().pulseUs[index(Digit::Index)], 0);
+    CHECK_GT(rig.hand.outputs().pulseUs[index(Digit::ThumbFlex)], 0);
+}
+
+TEST(profile_missing_fsr_channels_do_not_fabricate_contact_or_overforce) {
+    Rig rig;
+    HandConfig config = calibratedConfig();
+    for (uint8_t i = 0; i < kGraspDigitCount; ++i) config.force[i].present = false;
+    rig.reset(config);
+    rig.run(1.0f, 3.0f, 3.0f);
+
+    for (uint8_t i = 0; i < kGraspDigitCount; ++i) rig.in.fsrCounts[i] = 4095.0f;
+    rig.run(1.0f, 600.0f, 3.0f);
+
+    CHECK_FALSE(rig.hand.telemetry().contact);
+    CHECK_NEAR(rig.hand.telemetry().peakForce, 0.0f, 1e-6);
+    CHECK_EQ(rig.hand.telemetry().faults & kFaultOverForce, 0);
+}
+
+TEST(profile_missing_aux_emg_calibration_fails_self_test_when_pattern_enabled) {
+    Rig rig;
+    HandConfig config = calibratedConfig();
+    config.pattern.enabled = true;
+    config.pattern.siteCount = 4;
+    // Auxiliary EMG sites remain uncalibrated -> structurally invalid config.
+    config.emgAux[0] = EmgCalibration{};
+    config.emgAux[1] = EmgCalibration{};
+    CHECK_FALSE(config.isValid());
+
+    rig.reset(config);
+    rig.run(0.8f, 3.0f, 3.0f);
+    CHECK_EQ(static_cast<int>(rig.hand.telemetry().mode),
+             static_cast<int>(ControlMode::SafeTorqueOff));
+    CHECK_FALSE(rig.hand.outputs().servoRailEnabled);
+    CHECK_FALSE(rig.hand.outputs().servoOutputEnabled);
+    for (uint8_t i = 0; i < kDigitCount; ++i) CHECK_EQ(rig.hand.outputs().pulseUs[i], 0);
+}
+
+TEST(controller_corrupt_magic_or_version_fails_self_test_into_sto) {
+    for (int kind = 0; kind < 2; ++kind) {
+        Rig rig;
+        HandConfig config = calibratedConfig();
+        if (kind == 0) {
+            config.magic ^= 0x00FF0000u;
+        } else {
+            config.version = static_cast<uint16_t>(HandConfig::kVersion + 1);
+        }
+        CHECK_FALSE(config.isValid());
+
+        rig.reset(config);
+        rig.run(0.8f, 3.0f, 3.0f);
+        CHECK_EQ(static_cast<int>(rig.hand.telemetry().mode),
+                 static_cast<int>(ControlMode::SafeTorqueOff));
+        CHECK_FALSE(rig.hand.outputs().servoRailEnabled);
+        CHECK_FALSE(rig.hand.outputs().servoOutputEnabled);
+        for (uint8_t i = 0; i < kDigitCount; ++i) CHECK_EQ(rig.hand.outputs().pulseUs[i], 0);
+    }
+}
+
+TEST(controller_invalid_digit_endpoints_raise_fault_and_enter_sto) {
+    Rig rig;
+    HandConfig config = calibratedConfig();
+    // Narrow/degenerate travel (< 100 us) on an enabled required digit.
+    config.digits[index(Digit::Index)].openUs = 1500;
+    config.digits[index(Digit::Index)].closedUs = 1510;
+    CHECK_FALSE(config.isValid());
+    CHECK_FALSE(config.digitsCalibrated());
+
+    rig.reset(config);
+    rig.run(0.8f, 3.0f, 3.0f);
+    CHECK(rig.hand.telemetry().faults & kFaultDigitCalibration);
+    CHECK_EQ(static_cast<int>(rig.hand.telemetry().mode),
+             static_cast<int>(ControlMode::SafeTorqueOff));
+    CHECK_EQ(rig.hand.outputs().pulseUs[index(Digit::Index)], 0);
+}
+
+TEST(controller_zero_and_negative_dt_are_clamped_and_preserve_slew_limits) {
+    Rig rig;
+    rig.reset(calibratedConfig());
+    rig.run(1.0f, 3.0f, 3.0f);
+
+    const float before = rig.hand.telemetry().aperture;
+    // Feed degenerate zero and negative dt values during active flexion.
+    for (int i = 0; i < 40; ++i) {
+        const float sign = (rig.sample++ % 2) ? 1.0f : -1.0f;
+        rig.in.emgFlexorCounts = 512.0f + sign * 600.0f;
+        rig.in.emgExtensorCounts = 512.0f + sign * 3.0f;
+        rig.hand.update(rig.in, (i % 2 == 0) ? 0.0f : -0.05f);
+    }
+    const float after = rig.hand.telemetry().aperture;
+    CHECK_FALSE(std::isnan(after));
+    CHECK(after >= before);
+    CHECK(after <= 1.0f);
+    CHECK_EQ(static_cast<int>(rig.hand.telemetry().mode), static_cast<int>(ControlMode::Active));
+}
+
+TEST(controller_sustained_timing_discontinuity_raises_loop_overrun_and_recovers) {
+    Rig rig;
+    rig.reset(calibratedConfig());
+    rig.run(1.0f, 3.0f, 3.0f);
+    CHECK_EQ(rig.hand.telemetry().faults & kFaultLoopOverrun, 0);
+
+    // Sustained 40 ms ticks (> 2x nominal 10 ms budget) must raise kFaultLoopOverrun
+    // without cutting the servo rail (warning severity).
+    for (int i = 0; i < 60; ++i) {
+        const float sign = (rig.sample++ % 2) ? 1.0f : -1.0f;
+        rig.in.emgFlexorCounts = 512.0f + sign * 3.0f;
+        rig.in.emgExtensorCounts = 512.0f + sign * 3.0f;
+        rig.hand.update(rig.in, 0.040f);
+    }
+    CHECK(rig.hand.loop().overrun());
+    CHECK_GT(rig.hand.loop().overrunCount(), 0u);
+    CHECK(rig.hand.telemetry().faults & kFaultLoopOverrun);
+    CHECK_EQ(static_cast<int>(rig.hand.telemetry().mode), static_cast<int>(ControlMode::Fault));
+    CHECK(rig.hand.outputs().servoRailEnabled);
+
+    // Returning to nominal 10 ms ticks clears the sustained overrun fault.
+    rig.run(3.0f, 3.0f, 3.0f, 0.010f);
+    CHECK_EQ(rig.hand.telemetry().faults & kFaultLoopOverrun, 0);
+    CHECK_EQ(static_cast<int>(rig.hand.telemetry().mode), static_cast<int>(ControlMode::Active));
+}
+
+TEST(controller_single_stalled_tick_records_worst_overrun_without_false_sustained_fault) {
+    Rig rig;
+    rig.reset(calibratedConfig());
+    rig.run(1.0f, 3.0f, 3.0f, 0.010f);
+
+    // One isolated 50 ms stall tick amidst steady 10 ms operation.
+    rig.hand.update(rig.in, 0.050f);
+    CHECK_GT(rig.hand.loop().worstSeconds(), 0.049f);
+    CHECK_EQ(rig.hand.loop().overrunCount(), 1u);
+    // Average remains well under 20 ms -> no false sustained overrun fault.
+    CHECK_EQ(rig.hand.telemetry().faults & kFaultLoopOverrun, 0);
+}
+
+TEST(controller_severe_fault_wins_over_concurrent_button_press_and_recovers) {
+    Rig rig;
+    rig.reset(calibratedConfig());
+    rig.run(1.0f, 3.0f, 3.0f);
+    const GripId initialGrip = rig.hand.grip();
+
+    // Assert I2C servo-bus loss on the exact same tick as a button click.
+    rig.in.servoBusOk = false;
+    rig.press(ButtonEvent::Click);
+
+    CHECK_EQ(static_cast<int>(rig.hand.telemetry().mode),
+             static_cast<int>(ControlMode::SafeTorqueOff));
+    CHECK(rig.hand.telemetry().faults & kFaultServoBus);
+    CHECK_EQ(static_cast<int>(rig.hand.grip()), static_cast<int>(initialGrip));
+    CHECK_FALSE(rig.hand.outputs().servoRailEnabled);
+    for (uint8_t i = 0; i < kDigitCount; ++i) CHECK_EQ(rig.hand.outputs().pulseUs[i], 0);
+
+    // Restoring bus health returns cleanly to Active.
+    rig.in.servoBusOk = true;
+    rig.run(0.1f, 3.0f, 3.0f);
+    CHECK_EQ(static_cast<int>(rig.hand.telemetry().mode), static_cast<int>(ControlMode::Active));
+    CHECK_EQ(rig.hand.telemetry().faults & kFaultServoBus, 0);
 }
 
 // =============================================================================

@@ -24,6 +24,7 @@ void ModeMachine::reset() {
     anyFault_ = false;
     severeFault_ = false;
     userParked_ = false;
+    selfTestFailed_ = false;
     idleTimer_ = 0.0f;
 }
 
@@ -48,8 +49,9 @@ void ModeMachine::setFaults(bool anyFault, bool severeFault) {
     }
 
     // A severe fault that clears should hand control back — unless the user
-    // parked the hand deliberately, in which case it stays parked.
-    if (mode_ == ControlMode::SafeTorqueOff && !userParked_) {
+    // parked the hand deliberately or the boot self-test failed, in which case
+    // it stays parked in SafeTorqueOff.
+    if (mode_ == ControlMode::SafeTorqueOff && !userParked_ && !selfTestFailed_) {
         transition(anyFault_ ? ControlMode::Fault : ControlMode::Active);
         return;
     }
@@ -68,7 +70,9 @@ void ModeMachine::dispatch(ButtonEvent event) {
             // The only control that works in every state — the user must
             // always be able to make the hand go limp.
             if (mode_ == ControlMode::SafeTorqueOff) {
-                if (severeFault_) return;  // cannot re-energise into a severe fault
+                if (severeFault_ || selfTestFailed_) {
+                    return;  // cannot re-energise into a severe fault or failed self-test
+                }
                 userParked_ = false;
                 transition(anyFault_ ? ControlMode::Fault : ControlMode::Active);
             } else {
@@ -113,11 +117,13 @@ void ModeMachine::dispatch(SystemEvent event) {
     switch (event) {
         case SystemEvent::SelfTestPassed:
             if (mode_ == ControlMode::Boot || mode_ == ControlMode::SelfTest) {
+                selfTestFailed_ = false;
                 transition(anyFault_ ? ControlMode::Fault : ControlMode::Active);
             }
             return;
 
         case SystemEvent::SelfTestFailed:
+            selfTestFailed_ = true;
             transition(ControlMode::SafeTorqueOff);
             return;
 
