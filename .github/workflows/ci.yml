@@ -22,6 +22,8 @@ jobs:
         run: python firmware/tools/run_core_tests.py
       - name: Application syntax against declaration stubs
         run: python firmware/tools/check_app_syntax.py
+      - name: Profile-aware campaign verification gate tests
+        run: python -m unittest discover -s verification -p "test_*.py" -v
 
   # Builds the real ESP32 image with the real Arduino-ESP32 framework and
   # libraries. COMPILE ONLY: no `-t upload`, no `pio device monitor`. GitHub

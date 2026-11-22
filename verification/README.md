@@ -21,6 +21,28 @@ Exit 0 is PASS, 1 is FAIL, 2 is PENDING/undersampled, and 3 means the evidence
 file is malformed. Commit a passing campaign, its report, raw serial CSV, and
 load-cell/cycle-rig logs together.
 
+### Hardware profile and provenance eligibility
+
+`verify_campaign.py` enforces two prerequisite gates before physical metrics can
+produce an overall `PASS`:
+
+- **Evidence provenance:** Synthetic records (`metadata.synthetic: true`) and
+  placeholder identifiers (`EXAMPLE-NOT-A-REAL-TEST`, all-zero commit hashes,
+  `operator: "example"`) fail automatically so example schemas can never pass
+  release eligibility.
+- **Hardware profile:** Design-stage profiles (`unidentified_design_stage`,
+  `cad_design_stage`, `firmware_default`) stay `PENDING` because no built hand
+  has been identified. Only an `identified_assembly` with explicit `assembly_id`,
+  `actuators`, `emg_front_end_isolated: true`, and declared fitted channels
+  (`has_thumb_opposition`, `has_wrist`, `fitted_fsr_channels`,
+  `fitted_current_channels`) can satisfy profile-specific endpoint, FSR, and
+  direct stall gates. Stall or FSR trials reported for unfitted channels fail
+  explicitly.
+- **Control timing & hardware disconnect / STO:** Physical bench evidence for
+  worst-case tick interval (`<= 10 ms`), watchdog reset, and actual torque loss
+  on reset, active-low OE, I2C bus fault, and independent power cut remain
+  `PENDING` until recorded on an authorized fixture.
+
 ## Bench validation
 
 Work on an unloaded, restrained hand with an accessible emergency power cut.
