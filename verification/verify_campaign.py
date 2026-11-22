@@ -88,10 +88,27 @@ class ResolvedProfile:
     emg_front_end_isolated: bool | None
 
 
-def number(value: Any) -> float:
+def number(
+    value: Any,
+    *,
+    field: str = "value",
+    minimum: float | None = None,
+    maximum: float | None = None,
+) -> float:
     if isinstance(value, bool) or not isinstance(value, (int, float)) or not math.isfinite(value):
-        raise ValueError(f"expected finite number, got {value!r}")
-    return float(value)
+        raise ValueError(f"expected finite number for {field}, got {value!r}")
+    out = float(value)
+    if minimum is not None and out < minimum:
+        raise ValueError(f"{field} must be >= {minimum:g}, got {value!r}")
+    if maximum is not None and out > maximum:
+        raise ValueError(f"{field} must be <= {maximum:g}, got {value!r}")
+    return out
+
+
+def boolean(value: Any, field: str) -> bool:
+    if not isinstance(value, bool):
+        raise ValueError(f"expected JSON boolean for {field}, got {value!r}")
+    return value
 
 
 def threshold(data: dict[str, Any], key: str, default: float | None = None) -> float:
@@ -100,7 +117,7 @@ def threshold(data: dict[str, Any], key: str, default: float | None = None) -> f
         if default is not None:
             return float(default)
         raise KeyError(key)
-    return number(thresholds[key])
+    return number(thresholds[key], field=f"thresholds.{key}", minimum=0.0)
 
 
 def pending(name: str, criterion: str, detail: str) -> Gate:
@@ -132,8 +149,16 @@ def resolve_profile(data: dict[str, Any]) -> ResolvedProfile:
         )
     spec = KNOWN_PROFILES[name]
 
-    has_thumb_opp = bool(raw.get("has_thumb_opposition", spec["has_thumb_opposition"]))
-    has_wrist = bool(raw.get("has_wrist", spec["has_wrist"]))
+    has_thumb_opp = (
+        boolean(raw["has_thumb_opposition"], "hardware_profile.has_thumb_opposition")
+        if "has_thumb_opposition" in raw
+        else bool(spec["has_thumb_opposition"])
+    )
+    has_wrist = (
+        boolean(raw["has_wrist"], "hardware_profile.has_wrist")
+        if "has_wrist" in raw
+        else bool(spec["has_wrist"])
+    )
     fitted_fsr = _string_tuple(raw.get("fitted_fsr_channels"), tuple(spec["fitted_fsr_channels"]))
     fitted_curr = _string_tuple(
         raw.get("fitted_current_channels"), tuple(spec["fitted_current_channels"])
@@ -141,7 +166,11 @@ def resolve_profile(data: dict[str, Any]) -> ResolvedProfile:
     assembly_id = str(raw.get("assembly_id") or "").strip()
     actuators = _string_tuple(raw.get("actuators"), ())
     emg_iso_raw = raw.get("emg_front_end_isolated")
-    emg_isolated = None if emg_iso_raw is None else bool(emg_iso_raw)
+    emg_isolated = (
+        None
+        if emg_iso_raw is None
+        else boolean(emg_iso_raw, "hardware_profile.emg_front_end_isolated")
+    )
 
     return ResolvedProfile(
         name=name,
@@ -158,7 +187,7 @@ def resolve_profile(data: dict[str, Any]) -> ResolvedProfile:
 
 def _check_provenance(meta: dict[str, Any]) -> Gate:
     reasons: list[str] = []
-    if bool(meta.get("synthetic", False)):
+    if "synthetic" in meta and boolean(meta["synthetic"], "metadata.synthetic"):
         reasons.append("metadata.synthetic=true")
     device_id = str(meta.get("device_id", "")).strip()
     commit = str(meta.get("firmware_commit", "")).strip()
@@ -248,8 +277,12 @@ def evaluate(data: dict[str, Any]) -> list[Gate]:
                 f"received {len(battery)} point(s)",
             )
         )
-    elif any(number(row["reference_volts"]) == 0 for row in battery):
-        bad = sum(1 for row in battery if number(row["reference_volts"]) == 0)
+    elif any(number(row["reference_volts"], field="battery.reference_volts", minimum=0.0) == 0 for row in battery):
+        bad = sum(
+            1
+            for row in battery
+            if number(row["reference_volts"], field="battery.reference_volts", minimum=0.0) == 0
+        )
         gates.append(
             Gate(
                 "Battery divider",
@@ -260,8 +293,11 @@ def evaluate(data: dict[str, Any]) -> list[Gate]:
         )
     else:
         errors = [
-            abs(number(row["telemetry_volts"]) - number(row["reference_volts"]))
-            / number(row["reference_volts"])
+            abs(
+                number(row["telemetry_volts"], field="battery.telemetry_volts", minimum=0.0)
+                - number(row["reference_volts"], field="battery.reference_volts", minimum=0.0)
+            )
+            / number(row["reference_volts"], field="battery.reference_volts", minimum=0.0)
             * 100.0
             for row in battery
         ]
@@ -283,11 +319,22 @@ def evaluate(data: dict[str, Any]) -> list[Gate]:
 
     endpoints = {str(row.get("digit")): row for row in data.get("servo_endpoints", [])}
     missing = sorted(required_digits - endpoints.keys())
-    endpoint_ok = not missing and all(
-        bool(endpoints[d].get("clearance_pass"))
-        and abs(number(endpoints[d]["closed_us"]) - number(endpoints[d]["open_us"])) >= 200
-        for d in required_digits
-    )
+    endpoint_ok = True
+    if not missing:
+        for d in sorted(required_digits):
+            clearance = boolean(
+                endpoints[d].get("clearance_pass"), f"servo_endpoints[{d}].clearance_pass"
+            )
+            closed_us = number(
+                endpoints[d]["closed_us"], field=f"servo_endpoints[{d}].closed_us", minimum=0.0
+            )
+            open_us = number(
+                endpoints[d]["open_us"], field=f"servo_endpoints[{d}].open_us", minimum=0.0
+            )
+            if not (clearance and abs(closed_us - open_us) >= 200):
+                endpoint_ok = False
+    else:
+        endpoint_ok = False
     status = "PENDING" if missing else ("PASS" if endpoint_ok else "FAIL")
     gates.append(
         Gate(
@@ -301,11 +348,10 @@ def evaluate(data: dict[str, Any]) -> list[Gate]:
 
     fsr_by_sensor: dict[str, list[float]] = defaultdict(list)
     for row in data.get("fsr", []):
-        ref = number(row["reference_newtons"])
+        ref = number(row["reference_newtons"], field="fsr.reference_newtons", minimum=0.0)
+        telemetry = number(row["telemetry_newtons"], field="fsr.telemetry_newtons", minimum=0.0)
         if ref > 0:
-            fsr_by_sensor[str(row["sensor"])].append(
-                abs(number(row["telemetry_newtons"]) - ref) / ref * 100.0
-            )
+            fsr_by_sensor[str(row["sensor"])].append(abs(telemetry - ref) / ref * 100.0)
     fsr_required = set(profile.fitted_fsr_channels)
     unfitted_fsr = sorted(set(fsr_by_sensor.keys()) - fsr_required)
     if unfitted_fsr:
@@ -383,13 +429,19 @@ def evaluate(data: dict[str, Any]) -> list[Gate]:
         unfitted_stall = sorted(trial_channels - fitted_current)
         missing_stall = sorted(fitted_current - trial_channels)
         limit = threshold(data, "stall_max_latency_ms")
-        worst = max(number(row["detection_latency_ms"]) for row in stalls)
-        trials_ok = all(
-            number(row["detection_latency_ms"]) <= limit
-            and bool(row.get("isolated_channel"))
-            and bool(row.get("other_channels_operational"))
+        latencies = [
+            number(row["detection_latency_ms"], field="stall_trials.detection_latency_ms", minimum=0.0)
             for row in stalls
-        )
+        ]
+        worst = max(latencies)
+        trials_ok = True
+        for row, lat in zip(stalls, latencies):
+            isolated = boolean(row.get("isolated_channel"), "stall_trials.isolated_channel")
+            others_ok = boolean(
+                row.get("other_channels_operational"), "stall_trials.other_channels_operational"
+            )
+            if not (lat <= limit and isolated and others_ok):
+                trials_ok = False
         if unfitted_stall:
             gates.append(
                 Gate(
@@ -457,8 +509,16 @@ def evaluate(data: dict[str, Any]) -> list[Gate]:
             )
         )
     else:
-        power = [number(row["measured_newtons"]) for row in forces if row.get("grip") == "power"]
-        pinch = [number(row["measured_newtons"]) for row in forces if row.get("grip") == "pinch"]
+        power = [
+            number(row["measured_newtons"], field="grasp_force.measured_newtons", minimum=0.0)
+            for row in forces
+            if row.get("grip") == "power"
+        ]
+        pinch = [
+            number(row["measured_newtons"], field="grasp_force.measured_newtons", minimum=0.0)
+            for row in forces
+            if row.get("grip") == "pinch"
+        ]
         if len(power) < 5 or len(pinch) < 5:
             gates.append(
                 pending(
@@ -486,11 +546,19 @@ def evaluate(data: dict[str, Any]) -> list[Gate]:
             pending("Cycle life", "survive benchmark without functional loss", "no cycle campaign")
         )
     else:
-        best = max(life, key=lambda row: number(row["cycles"]))
-        cycles = int(number(best["cycles"]))
+        for row in life:
+            number(row["cycles"], field="cycle_life.cycles", minimum=0.0)
+        best = max(life, key=lambda row: number(row["cycles"], field="cycle_life.cycles", minimum=0.0))
+        cycles = int(number(best["cycles"], field="cycle_life.cycles", minimum=0.0))
         minimum = int(threshold(data, "minimum_grasp_cycles"))
         service = int(threshold(data, "service_goal_grasp_cycles"))
-        intact = not bool(best.get("failure")) and bool(best.get("inspection_pass"))
+        failed = (
+            boolean(best["failure"], "cycle_life.failure")
+            if "failure" in best
+            else False
+        )
+        inspection_pass = boolean(best.get("inspection_pass"), "cycle_life.inspection_pass")
+        intact = (not failed) and inspection_pass
         status = "PASS" if cycles >= minimum and intact else "FAIL"
         gates.append(
             Gate(
@@ -512,8 +580,16 @@ def evaluate(data: dict[str, Any]) -> list[Gate]:
             )
         )
     else:
-        worst_tick = max(number(row["worst_tick_ms"]) for row in timing)
-        wdg_ok = all(bool(row.get("watchdog_reset_verified")) for row in timing)
+        ticks = [
+            number(row["worst_tick_ms"], field="timing_trials.worst_tick_ms", minimum=0.0)
+            for row in timing
+        ]
+        worst_tick = max(ticks)
+        wdg_flags = [
+            boolean(row.get("watchdog_reset_verified"), "timing_trials.watchdog_reset_verified")
+            for row in timing
+        ]
+        wdg_ok = all(wdg_flags)
         ok = worst_tick <= timing_limit and wdg_ok
         gates.append(
             Gate(
@@ -550,7 +626,9 @@ def evaluate(data: dict[str, Any]) -> list[Gate]:
                 )
             )
         else:
-            failed_checks = [k for k in disconnect_fields if not bool(disconnect[k])]
+            failed_checks = [
+                k for k in disconnect_fields if not boolean(disconnect[k], f"safety_disconnect.{k}")
+            ]
             gates.append(
                 Gate(
                     "Hardware disconnect / STO",

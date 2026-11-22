@@ -239,6 +239,181 @@ class TestVerifyCampaignProfiles(unittest.TestCase):
             self.assertEqual(proc.returncode, 0, proc.stdout + proc.stderr)
             self.assertIn("Overall: **PASS**", proc.stdout)
 
+    def test_all_boolean_evidence_fields_reject_non_boolean_values_exit_3(self) -> None:
+        """Every boolean evidence/profile field must reject truthy strings, ints, and None."""
+        mutations = [
+            ("metadata.synthetic", lambda d, v: d["metadata"].__setitem__("synthetic", v)),
+            (
+                "hardware_profile.has_thumb_opposition",
+                lambda d, v: d["hardware_profile"].__setitem__("has_thumb_opposition", v),
+            ),
+            (
+                "hardware_profile.has_wrist",
+                lambda d, v: d["hardware_profile"].__setitem__("has_wrist", v),
+            ),
+            (
+                "hardware_profile.emg_front_end_isolated",
+                lambda d, v: d["hardware_profile"].__setitem__("emg_front_end_isolated", v),
+            ),
+            (
+                "servo_endpoints[0].clearance_pass",
+                lambda d, v: d["servo_endpoints"][0].__setitem__("clearance_pass", v),
+            ),
+            (
+                "stall_trials[0].isolated_channel",
+                lambda d, v: d["stall_trials"][0].__setitem__("isolated_channel", v),
+            ),
+            (
+                "stall_trials[0].other_channels_operational",
+                lambda d, v: d["stall_trials"][0].__setitem__("other_channels_operational", v),
+            ),
+            (
+                "cycle_life[0].failure",
+                lambda d, v: d["cycle_life"][0].__setitem__("failure", v),
+            ),
+            (
+                "cycle_life[0].inspection_pass",
+                lambda d, v: d["cycle_life"][0].__setitem__("inspection_pass", v),
+            ),
+            (
+                "timing_trials[0].watchdog_reset_verified",
+                lambda d, v: d["timing_trials"][0].__setitem__("watchdog_reset_verified", v),
+            ),
+            (
+                "safety_disconnect.reset_loss_of_torque_verified",
+                lambda d, v: d["safety_disconnect"].__setitem__("reset_loss_of_torque_verified", v),
+            ),
+            (
+                "safety_disconnect.oe_disable_verified",
+                lambda d, v: d["safety_disconnect"].__setitem__("oe_disable_verified", v),
+            ),
+            (
+                "safety_disconnect.i2c_bus_fault_loss_of_torque_verified",
+                lambda d, v: d["safety_disconnect"].__setitem__(
+                    "i2c_bus_fault_loss_of_torque_verified", v
+                ),
+            ),
+            (
+                "safety_disconnect.independent_power_cut_verified",
+                lambda d, v: d["safety_disconnect"].__setitem__(
+                    "independent_power_cut_verified", v
+                ),
+            ),
+        ]
+        bad_values = ["false", "true", 0, 1, None]
+        with tempfile.TemporaryDirectory() as tmp:
+            for field_name, mutate in mutations:
+                for bad in bad_values:
+                    # emg_front_end_isolated=None explicitly represents PENDING (missing field).
+                    if field_name == "hardware_profile.emg_front_end_isolated" and bad is None:
+                        continue
+                    with self.subTest(field=field_name, value=bad):
+                        data = copy.deepcopy(_complete_identified_fixture())
+                        mutate(data, bad)
+                        with self.assertRaises(ValueError):
+                            vc.evaluate(data)
+                        if bad == "false":
+                            p = Path(tmp) / "bad_bool.json"
+                            p.write_text(json.dumps(data), encoding="utf-8")
+                            proc = subprocess.run(
+                                [sys.executable, str(VERIFICATION_DIR / "verify_campaign.py"), str(p)],
+                                capture_output=True,
+                                text=True,
+                                check=False,
+                            )
+                            self.assertEqual(proc.returncode, 3, proc.stdout + proc.stderr)
+
+    def test_false_safety_confirmation_fields_fail_gates(self) -> None:
+        safety_fields = [
+            (
+                "Hardware profile",
+                lambda d: d["hardware_profile"].__setitem__("emg_front_end_isolated", False),
+            ),
+            (
+                "Servo endpoints",
+                lambda d: d["servo_endpoints"][0].__setitem__("clearance_pass", False),
+            ),
+            (
+                "Direct stall detection",
+                lambda d: d["stall_trials"][0].__setitem__("isolated_channel", False),
+            ),
+            (
+                "Direct stall detection",
+                lambda d: d["stall_trials"][0].__setitem__("other_channels_operational", False),
+            ),
+            (
+                "Cycle life",
+                lambda d: d["cycle_life"][0].__setitem__("inspection_pass", False),
+            ),
+            (
+                "Cycle life",
+                lambda d: d["cycle_life"][0].__setitem__("failure", True),
+            ),
+            (
+                "Control timing",
+                lambda d: d["timing_trials"][0].__setitem__("watchdog_reset_verified", False),
+            ),
+            (
+                "Hardware disconnect / STO",
+                lambda d: d["safety_disconnect"].__setitem__("reset_loss_of_torque_verified", False),
+            ),
+            (
+                "Hardware disconnect / STO",
+                lambda d: d["safety_disconnect"].__setitem__("oe_disable_verified", False),
+            ),
+            (
+                "Hardware disconnect / STO",
+                lambda d: d["safety_disconnect"].__setitem__(
+                    "i2c_bus_fault_loss_of_torque_verified", False
+                ),
+            ),
+            (
+                "Hardware disconnect / STO",
+                lambda d: d["safety_disconnect"].__setitem__(
+                    "independent_power_cut_verified", False
+                ),
+            ),
+        ]
+        for gate_name, mutate in safety_fields:
+            with self.subTest(gate=gate_name):
+                data = copy.deepcopy(_complete_identified_fixture())
+                mutate(data)
+                gates = _gate_map(vc.evaluate(data))
+                self.assertEqual(gates[gate_name].status, "FAIL")
+
+    def test_negative_numeric_evidence_fields_rejected_exit_3(self) -> None:
+        numeric_mutations = [
+            ("timing_trials.worst_tick_ms", lambda d: d["timing_trials"][0].__setitem__("worst_tick_ms", -1)),
+            (
+                "stall_trials.detection_latency_ms",
+                lambda d: d["stall_trials"][0].__setitem__("detection_latency_ms", -5),
+            ),
+            (
+                "grasp_force.measured_newtons",
+                lambda d: d["grasp_force"][0].__setitem__("measured_newtons", -10.0),
+            ),
+            ("cycle_life.cycles", lambda d: d["cycle_life"][0].__setitem__("cycles", -100)),
+            ("servo_endpoints.open_us", lambda d: d["servo_endpoints"][0].__setitem__("open_us", -1)),
+            ("battery.reference_volts", lambda d: d["battery"][0].__setitem__("reference_volts", -1.0)),
+            ("fsr.reference_newtons", lambda d: d["fsr"][0].__setitem__("reference_newtons", -2.0)),
+        ]
+        with tempfile.TemporaryDirectory() as tmp:
+            for field_name, mutate in numeric_mutations:
+                with self.subTest(field=field_name):
+                    data = copy.deepcopy(_complete_identified_fixture())
+                    mutate(data)
+                    with self.assertRaises(ValueError):
+                        vc.evaluate(data)
+                    p = Path(tmp) / "neg_num.json"
+                    p.write_text(json.dumps(data), encoding="utf-8")
+                    proc = subprocess.run(
+                        [sys.executable, str(VERIFICATION_DIR / "verify_campaign.py"), str(p)],
+                        capture_output=True,
+                        text=True,
+                        check=False,
+                    )
+                    self.assertEqual(proc.returncode, 3, proc.stdout + proc.stderr)
+
 
 if __name__ == "__main__":
     unittest.main()
