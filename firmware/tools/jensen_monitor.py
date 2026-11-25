@@ -48,6 +48,7 @@ FAULT_BITS = [
     (0x0080, "loop_overrun"),
     (0x0100, "sensor_range"),
     (0x0200, "motor_stall"),
+    (0x0400, "servo_reset"),
 ]
 
 

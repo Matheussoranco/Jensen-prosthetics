@@ -81,6 +81,8 @@ void sampleInputs() {
     }
 
     g_inputs.servoBusOk = g_servos.healthy();
+    // Consumed here, ahead of the control update that latches it.
+    g_inputs.servoDriverReset = g_servos.takeReset();
 }
 
 /// Applies one iteration's outputs to the hardware.
@@ -119,7 +121,13 @@ void handleDisplayCommand(NextionDisplay::Command command, uint8_t argument) {
             g_hand.setHold(g_hand.telemetry().mode != ControlMode::Hold);
             break;
         case NextionDisplay::Command::TogglePark:
-            g_hand.park(g_hand.telemetry().mode != ControlMode::SafeTorqueOff);
+            // After a servo-driver reset the wearer's tap is the consent to
+            // energise again; park() alone cannot give it.
+            if (g_hand.telemetry().awaitingWearer) {
+                g_hand.acknowledgeServoReset();
+            } else {
+                g_hand.park(g_hand.telemetry().mode != ControlMode::SafeTorqueOff);
+            }
             break;
         case NextionDisplay::Command::Calibrate:
             g_hand.startEmgCalibration();
@@ -223,6 +231,12 @@ void loop() {
 
         const jensen::HandOutputs& outputs = g_hand.update(g_inputs, dt);
 
+        // Bench calibration drives the bus directly, so a driver reset has to
+        // end it here or the rail would stay in the CLI's hands.
+        if (g_hand.telemetry().awaitingWearer && g_cli.benchMode()) {
+            g_cli.abortDigitCalibration();
+        }
+
         // While the CLI is jogging a servo for endpoint calibration it owns the
         // bus; applying controller output at the same time would fight it.
         if (!g_cli.benchMode()) {
@@ -257,7 +271,9 @@ void loop() {
     g_display.update(g_hand.telemetry(), nowMillis);
 
     // A harness that works loose is a real failure mode in a worn device, so
-    // the bus is re-probed continuously rather than only at boot.
+    // the bus is re-probed continuously rather than only at boot. The probe
+    // also reads the configuration back, and restores it if the chip was
+    // reset; that carries on while the hand waits limp for its wearer.
     if ((nowMillis - g_lastServoPollMillis) >= 250) {
         g_lastServoPollMillis = nowMillis;
         g_servos.poll();

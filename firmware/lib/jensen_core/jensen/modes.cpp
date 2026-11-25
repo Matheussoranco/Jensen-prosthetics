@@ -25,7 +25,20 @@ void ModeMachine::reset() {
     severeFault_ = false;
     userParked_ = false;
     selfTestFailed_ = false;
+    awaitingWearer_ = false;
     idleTimer_ = 0.0f;
+}
+
+bool ModeMachine::releaseByWearer() {
+    changed_ = false;
+    if (!awaitingWearer_ || mode_ != ControlMode::SafeTorqueOff || severeFault_ ||
+        selfTestFailed_) {
+        return false;
+    }
+    awaitingWearer_ = false;
+    userParked_ = false;
+    transition(anyFault_ ? ControlMode::Fault : ControlMode::Active);
+    return true;
 }
 
 void ModeMachine::transition(ControlMode next) {
@@ -49,9 +62,10 @@ void ModeMachine::setFaults(bool anyFault, bool severeFault) {
     }
 
     // A severe fault that clears should hand control back — unless the user
-    // parked the hand deliberately or the boot self-test failed, in which case
-    // it stays parked in SafeTorqueOff.
-    if (mode_ == ControlMode::SafeTorqueOff && !userParked_ && !selfTestFailed_) {
+    // parked the hand deliberately, the boot self-test failed or the servo
+    // driver was reset, in which case it stays in SafeTorqueOff.
+    if (mode_ == ControlMode::SafeTorqueOff && !userParked_ && !selfTestFailed_ &&
+        !awaitingWearer_) {
         transition(anyFault_ ? ControlMode::Fault : ControlMode::Active);
         return;
     }
@@ -70,8 +84,11 @@ void ModeMachine::dispatch(ButtonEvent event) {
             // The only control that works in every state — the user must
             // always be able to make the hand go limp.
             if (mode_ == ControlMode::SafeTorqueOff) {
-                if (severeFault_ || selfTestFailed_) {
-                    return;  // cannot re-energise into a severe fault or failed self-test
+                // Waiting after a driver reset is released only through
+                // releaseByWearer(): this event also arrives from park(),
+                // which software sends on its own.
+                if (severeFault_ || selfTestFailed_ || awaitingWearer_) {
+                    return;  // cannot re-energise
                 }
                 userParked_ = false;
                 transition(anyFault_ ? ControlMode::Fault : ControlMode::Active);
@@ -118,7 +135,19 @@ void ModeMachine::dispatch(SystemEvent event) {
         case SystemEvent::SelfTestPassed:
             if (mode_ == ControlMode::Boot || mode_ == ControlMode::SelfTest) {
                 selfTestFailed_ = false;
-                transition(anyFault_ ? ControlMode::Fault : ControlMode::Active);
+                if (awaitingWearer_) {
+                    transition(ControlMode::SafeTorqueOff);
+                } else {
+                    transition(anyFault_ ? ControlMode::Fault : ControlMode::Active);
+                }
+            }
+            return;
+
+        case SystemEvent::ServoDriverReset:
+            awaitingWearer_ = true;
+            // During boot the self-test still has to run; it ends limp.
+            if (mode_ != ControlMode::Boot && mode_ != ControlMode::SelfTest) {
+                transition(ControlMode::SafeTorqueOff);
             }
             return;
 

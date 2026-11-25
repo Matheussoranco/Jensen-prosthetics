@@ -365,6 +365,10 @@ void SerialCli::handleLine(char* line) {
         }
         hand_->park(enabled);
         out_->printf("park %s\r\n", hand_->modes().mode() == ControlMode::SafeTorqueOff ? "on" : "off");
+        if (!enabled && hand_->modes().awaitingWearer()) {
+            out_->println(F("servo driver was reset: the wearer resumes with a very long "
+                            "button press or the display"));
+        }
 
     } else if (equals(command, "open")) {
         if (count != 1) {
@@ -679,6 +683,11 @@ void SerialCli::beginDigitCalibration(const char* digitName) {
         out_->println(F("calibration blocked: severe fault"));
         return;
     }
+    if (hand_->modes().awaitingWearer() || servos_->resetPending()) {
+        out_->println(F("calibration blocked: servo driver was reset; "
+                        "the wearer must resume first"));
+        return;
+    }
     wasParkedBeforeCalibration_ = hand_->modes().mode() == ControlMode::SafeTorqueOff;
 
     working_ = hand_->config();
@@ -809,6 +818,12 @@ void SerialCli::endDigitCalibration(bool save) {
     hand_->park(wasParkedBeforeCalibration_);
 }
 
+void SerialCli::abortDigitCalibration() {
+    if (!digitRunner_.active() || out_ == nullptr) return;
+    endDigitCalibration(false);
+    out_->println(F("calibration aborted: servo driver reset"));
+}
+
 // --- Reporting ---------------------------------------------------------------
 
 void SerialCli::printHelp() {
@@ -867,6 +882,9 @@ void SerialCli::printStatus() {
                  static_cast<double>(t.stateOfCharge * 100.0f));
     out_->printf("faults    0x%04X %s\r\n", static_cast<unsigned>(t.faults),
                  t.faultName ? t.faultName : "none");
+    out_->printf("driver    %lu reset(s) since boot%s\r\n",
+                 static_cast<unsigned long>(t.servoResetCount),
+                 t.awaitingWearer ? ", limp until the wearer resumes" : "");
     out_->printf("loop      %.2f ms, %lu iterations, up %lu s\r\n",
                  static_cast<double>(t.loopSeconds * 1000.0f),
                  static_cast<unsigned long>(t.loopCount),

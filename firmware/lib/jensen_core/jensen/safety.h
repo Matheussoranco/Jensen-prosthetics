@@ -28,6 +28,10 @@ enum FaultFlag : uint16_t {
     kFaultLoopOverrun = 1u << 7,     ///< control loop missed its deadline
     kFaultSensorRange = 1u << 8,     ///< an input sat at rail — open or shorted
     kFaultMotorStall = 1u << 9,      ///< directly measured servo stall current
+    /// The PCA9685 was reset; limp until the wearer acts. Not in the severe
+    /// set: the mode machine holds the hand, and a severe fault would block
+    /// the very gesture that releases it.
+    kFaultServoReset = 1u << 10,
 };
 
 struct BatteryConfig {

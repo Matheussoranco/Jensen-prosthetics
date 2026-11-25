@@ -64,6 +64,13 @@ public:
     void setHold(bool hold);
     void park(bool parked);
 
+    /// The wearer acknowledging a servo-driver reset on the touch display. The
+    /// button's very long press does the same inside update(). park() does
+    /// not: software calls it too. False when nothing is waiting, when the
+    /// hand went limp too recently for this to be a considered tap, or when
+    /// the hand cannot be energised.
+    bool acknowledgeServoReset();
+
     void startEmgCalibration();
     void abortCalibration();
     bool calibrating() const { return emgRunner_.running(); }
@@ -102,6 +109,8 @@ public:
 private:
     void configureFromConfig();
     void resetMotion();
+    void onServoDriverReset();
+    bool releaseAfterReset(float minLimpSeconds);
 
     void updateSensors(const HandInputs& inputs, float dt);
     void updateFaults(const HandInputs& inputs, float dt);
@@ -170,6 +179,9 @@ private:
     float emgStuckTimer_ = 0.0f;
 
     float selfTestTimer_ = 0.0f;
+    /// Time limp since the latest servo-driver reset, while still waiting.
+    float awaitingSeconds_ = 0.0f;
+    uint32_t servoResetCount_ = 0;
     float uptimeSeconds_ = 0.0f;
     uint32_t loopCount_ = 0;
 

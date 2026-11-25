@@ -1,5 +1,7 @@
 #include "jensen/hand_controller.h"
 
+#include "jensen/button_gestures.h"
+
 namespace jensen {
 
 namespace {
@@ -21,6 +23,15 @@ constexpr float kCommandedApertureRate = 1.5f;
 constexpr float kRelaxRate = 0.6f;
 
 constexpr float kSelfTestSeconds = 0.4f;
+
+/// After a servo-driver reset, how long the hand must already have been limp
+/// for a gesture to count as consent.  The button's value is the length of the
+/// very long press itself, so the press must have started after the hand went
+/// limp: someone holding the button to park cannot wake it by accident.  A tap
+/// on the display is instantaneous and only needs to outlast one in flight.
+constexpr float kButtonConsentSeconds =
+    static_cast<float>(ButtonTiming{}.veryLongPressMillis) / 1000.0f;
+constexpr float kDisplayConsentSeconds = 1.0f;
 
 LedPattern ledFor(ControlMode mode) {
     switch (mode) {
@@ -57,6 +68,8 @@ void HandController::begin(const HandConfig& config) {
     resetMotion();
 
     selfTestTimer_ = 0.0f;
+    awaitingSeconds_ = 0.0f;
+    servoResetCount_ = 0;
     uptimeSeconds_ = 0.0f;
     loopCount_ = 0;
     configDirty_ = false;
@@ -157,6 +170,14 @@ const HandOutputs& HandController::update(const HandInputs& inputs, float dt) {
     loop_.update(dt);
 
     updateSensors(inputs, dt);
+    // Latched before the faults are evaluated: logic power coming back clears
+    // the bus fault on this same iteration, so the mode never passes through
+    // Active and the telemetry shows why the hand is limp from this tick on.
+    if (inputs.servoDriverReset) {
+        onServoDriverReset();
+    } else if (modes_.awaitingWearer()) {
+        awaitingSeconds_ += dt;
+    }
     updateFaults(inputs, dt);
 
     // Faults are evaluated before user input: a severe fault must win over a
@@ -177,7 +198,10 @@ const HandOutputs& HandController::update(const HandInputs& inputs, float dt) {
 
     // Button gestures. The mode machine decides the state change; grip
     // selection is this class's business.
-    if (inputs.button != ButtonEvent::None) {
+    if (inputs.button == ButtonEvent::VeryLongPress && modes_.awaitingWearer() &&
+        modes_.mode() == ControlMode::SafeTorqueOff) {
+        releaseAfterReset(kButtonConsentSeconds);
+    } else if (inputs.button != ButtonEvent::None) {
         modes_.dispatch(inputs.button);
         if (inputs.button == ButtonEvent::Click && modes_.acceptsUserInput()) nextGrip();
     }
@@ -245,6 +269,7 @@ void HandController::updateSensors(const HandInputs& inputs, float dt) {
 
 void HandController::updateFaults(const HandInputs& inputs, float dt) {
     safety_.set(kFaultServoBus, !inputs.servoBusOk);
+    safety_.set(kFaultServoReset, modes_.awaitingWearer());
     safety_.set(kFaultBatteryLow, battery_.low());
     safety_.set(kFaultBatteryCritical, battery_.critical());
     safety_.set(kFaultDigitCalibration, !config_.digitsCalibrated());
@@ -498,6 +523,8 @@ void HandController::updateTelemetry(float dt) {
 
     t.faults = safety_.faults();
     t.faultName = safety_.worstFaultName();
+    t.awaitingWearer = modes_.awaitingWearer();
+    t.servoResetCount = servoResetCount_;
 
     t.calibrationStep = emgRunner_.running() ? emgRunner_.stepName() : nullptr;
     t.calibrationProgress = emgRunner_.progress();
@@ -551,6 +578,39 @@ void HandController::park(bool parked) {
     if (parked != isParked) modes_.dispatch(ButtonEvent::VeryLongPress);
 }
 
+// --- Servo-driver reset -------------------------------------------------------
+
+void HandController::onServoDriverReset() {
+    modes_.dispatch(SystemEvent::ServoDriverReset);
+    awaitingSeconds_ = 0.0f;
+    ++servoResetCount_;
+    apertureCommandActive_ = false;
+    // Asked for explicitly: the usual warning cue only fires when the first
+    // fault appears, and another may already be showing.
+    requestHaptic(HapticCue::Warning);
+}
+
+bool HandController::releaseAfterReset(float minLimpSeconds) {
+    if (awaitingSeconds_ < minLimpSeconds || !modes_.releaseByWearer()) return false;
+    // Drop the fault now, so the hand does not spend a tick in Fault for it.
+    safety_.set(kFaultServoReset, false);
+    modes_.setFaults(safety_.any(), safety_.requiresSafeTorqueOff());
+    telemetry_.faults = safety_.faults();
+    telemetry_.faultName = safety_.worstFaultName();
+    telemetry_.awaitingWearer = false;
+    // Nothing queued while limp may move the hand now: it comes back open and
+    // follows the muscles from there.
+    apertureCommandActive_ = false;
+    commandedAperture_ = 0.0f;
+    aperture_ = 0.0f;
+    drive_.reset();
+    return true;
+}
+
+bool HandController::acknowledgeServoReset() {
+    return releaseAfterReset(kDisplayConsentSeconds);
+}
+
 void HandController::startEmgCalibration() {
     if (modes_.mode() == ControlMode::Calibrating) return;
     modes_.dispatch(ButtonEvent::LongPress);
@@ -569,6 +629,8 @@ void HandController::commandAperture(float aperture) {
 }
 
 void HandController::setWristTarget(float closure) {
+    // Not queued for later: the wrist must not move when the hand is resumed.
+    if (modes_.awaitingWearer()) return;
     wristTarget_ = clamp01(closure);
 }
 

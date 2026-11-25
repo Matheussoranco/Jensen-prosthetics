@@ -38,6 +38,10 @@ struct HandInputs {
 
     /// False when the PCA9685 stopped acknowledging on I2C.
     bool servoBusOk = true;
+
+    /// True on the one iteration after the driver found that the PCA9685 had
+    /// lost its configuration (it was reset, typically by losing logic power).
+    bool servoDriverReset = false;
 };
 
 /// Haptic cues. The motor is a single eccentric-mass module, so the vocabulary
@@ -126,6 +130,11 @@ struct HandTelemetry {
     float closureLimit = 1.0f;
     bool contact = false;
     uint32_t slipCount = 0;
+
+    /// The servo driver was reset: the hand is limp until the wearer acts.
+    bool awaitingWearer = false;
+    /// Driver resets seen since boot.
+    uint32_t servoResetCount = 0;
 
     float batteryVolts = 0.0f;
     float batteryCellVolts = 0.0f;
