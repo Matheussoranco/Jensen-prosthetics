@@ -1,0 +1,10 @@
+{"ts":"2026-11-25T23:35:12Z","trace":"jensen-pca-recovery","actor":"claude-code","event":"CLAIM","ref":"Jensen-prosthetics#8 issuecomment-7177768463","summary":"Claimed #8 after the owner decision; isolated worktree and branch."}
+{"ts":null,"trace":"jensen-pca-recovery","actor":"claude-code","event":"SOURCE_CHECK","ref":"NXP PCA9685 data sheet; Adafruit PWM Servo Driver 3.0.3","summary":"Confirmed power-on register state and that setPWMFreq alone leaves a fresh chip asleep."}
+{"ts":null,"trace":"jensen-pca-recovery","actor":"claude-code","event":"DEFECT_FOUND","ref":"servo_bus.cpp","summary":"A chip absent at boot would later be marked healthy without being configured."}
+{"ts":null,"trace":"jensen-pca-recovery","actor":"claude-code","event":"DEFECT_FOUND","ref":"hand_controller.cpp","summary":"Own change: resume spent one tick in Fault. Failing assertion first, then fixed."}
+{"ts":null,"trace":"jensen-pca-recovery","actor":"claude-code","event":"DEFECT_FOUND","ref":"hand_controller.cpp","summary":"Own change: a wrist command sent while limp ran on resume. Failing test first, then fixed."}
+{"ts":null,"trace":"jensen-pca-recovery","actor":"claude-code","event":"VERIFY_HOST","ref":"c0bb469","summary":"Core 124/0, HAL 13/0, 8 app sources compiled with -Werror, verification tests 16 passed."}
+{"ts":"2026-11-25T23:49:21Z","trace":"jensen-pca-recovery","actor":"claude-code","event":"COMMIT","ref":"c0bb469889f2431a461bdb239c85074947ca5104","summary":"Fix committed and pushed."}
+{"ts":"2026-11-25T23:49:42Z","trace":"jensen-pca-recovery","actor":"claude-code","event":"ISSUE_FILED","ref":"Jensen-prosthetics#9","summary":"Two cases left unchanged, filed for an owner decision."}
+{"ts":"2026-11-25T23:49:56Z","trace":"jensen-pca-recovery","actor":"claude-code","event":"PR_OPENED","ref":"Jensen-prosthetics#10","summary":"Opened against main; two reviewers required."}
+{"ts":"2026-11-25T23:51:02Z","trace":"jensen-pca-recovery","actor":"github-actions","event":"VERIFY_CI","ref":"run 45724318183","summary":"Host checks and ESP32 compile-only build with HAL tests succeeded."}
