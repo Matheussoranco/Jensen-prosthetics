@@ -181,6 +181,8 @@ private:
     float selfTestTimer_ = 0.0f;
     /// Time limp since the latest servo-driver reset, while still waiting.
     float awaitingSeconds_ = 0.0f;
+    /// The button has been seen up since the latest reset.
+    bool releasedSinceReset_ = false;
     uint32_t servoResetCount_ = 0;
     float uptimeSeconds_ = 0.0f;
     uint32_t loopCount_ = 0;

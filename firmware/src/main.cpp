@@ -228,6 +228,7 @@ void loop() {
 
         sampleInputs();
         g_inputs.button = g_button.poll(nowMillis);
+        g_inputs.buttonDown = g_button.pressed();
 
         const jensen::HandOutputs& outputs = g_hand.update(g_inputs, dt);
 

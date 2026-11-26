@@ -1936,6 +1936,61 @@ TEST(very_long_press_returns_the_hand_without_running_stale_commands) {
     CHECK_NEAR(rig.hand.telemetry().aperture, 0.0f, 1e-3);
 }
 
+TEST(button_held_since_before_the_reset_never_counts_however_long) {
+    // Elapsed time alone is not proof the press is new: summed dt can run ahead
+    // of the clock the button gestures use.
+    Rig rig;
+    startRunning(rig);
+    rig.in.buttonDown = true;
+    reportReset(rig);
+    rig.run(6.0f, 3.0f, 3.0f);
+    rig.press(ButtonEvent::VeryLongPress);
+    CHECK(isLimp(rig));
+
+    rig.in.buttonDown = false;  // let go, then press again
+    rig.run(0.2f, 3.0f, 3.0f);
+    rig.in.buttonDown = true;
+    rig.run(4.0f, 3.0f, 3.0f);
+    rig.press(ButtonEvent::VeryLongPress);
+    CHECK_EQ(modeOf(rig), kActive);
+}
+
+TEST(a_release_seen_before_a_second_reset_does_not_carry_over) {
+    Rig rig;
+    startRunning(rig);
+    reportReset(rig);
+    rig.run(1.0f, 3.0f, 3.0f);  // button up: seen released
+    rig.in.buttonDown = true;
+    reportReset(rig);
+    rig.run(6.0f, 3.0f, 3.0f);
+    rig.press(ButtonEvent::VeryLongPress);
+    CHECK(isLimp(rig));
+}
+
+TEST(grip_changes_made_while_limp_are_dropped) {
+    Rig rig;
+    startRunning(rig);
+    rig.run(2.0f, 3.0f, 3.0f);
+    const GripId grip = rig.hand.grip();
+    uint16_t before[kDigitCount];
+    for (uint8_t i = 0; i < kDigitCount; ++i) before[i] = rig.hand.outputs().pulseUs[i];
+
+    reportReset(rig);
+    rig.hand.selectGrip(GripId::LateralKey);
+    rig.hand.nextGrip();
+    rig.hand.previousGrip();
+    rig.hand.previousGrip();
+    CHECK_EQ(static_cast<int>(rig.hand.grip()), static_cast<int>(grip));
+    rig.run(5.0f, 3.0f, 3.0f);
+    rig.press(ButtonEvent::VeryLongPress);
+    rig.run(4.0f, 3.0f, 3.0f);
+    CHECK_EQ(modeOf(rig), kActive);
+    for (uint8_t i = 0; i < kDigitCount; ++i) CHECK_EQ(rig.hand.outputs().pulseUs[i], before[i]);
+
+    rig.hand.selectGrip(GripId::LateralKey);  // once resumed, selection works as before
+    CHECK_EQ(static_cast<int>(rig.hand.grip()), static_cast<int>(GripId::LateralKey));
+}
+
 TEST(wrist_command_sent_while_limp_is_dropped) {
     Rig rig;
     HandConfig config = calibratedConfig();

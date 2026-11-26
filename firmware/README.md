@@ -303,8 +303,12 @@ forgets its configuration. The firmware notices within about a quarter of a
 second, cuts torque, configures the chip again with every output off, and
 **leaves the hand limp until the wearer acts**:
 
-- a very long press on the button, started after the hand went limp, or
+- a very long press on the button, started after the hand went limp (a button
+  already held when it went limp must be let go first), or
 - the park button on the touch display, at least 1 s after.
+
+Grip changes, open/close and wrist commands are ignored while it waits, so
+resuming does not act on anything sent in the meantime.
 
 While the ESP32 stays up, nothing else resumes it: not the fault clearing,
 not muscle activity, not `park off` on the console. It buzzes the warning

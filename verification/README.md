@@ -46,7 +46,10 @@ produce an overall `PASS`:
   restrained, interrupting only the PCA9685 logic supply must leave the rail off
   and the hand limp until the wearer acts. Also record the time from restored
   supply to torque removal, behaviour on a shallow brownout that may not reset
-  the chip cleanly, and the control-tick interval during reconfiguration.
+  the chip cleanly, and the control-tick interval during reconfiguration. At
+  bring-up, confirm the fitted board reads `MODE1` and `PRE_SCALE` back as
+  written: the firmware now treats a mismatch as a servo-bus fault, so a part
+  that does not would leave the hand unpowered.
   `PENDING`.
 
 ## Bench validation
