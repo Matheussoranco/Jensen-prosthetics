@@ -42,6 +42,7 @@ enum class SystemEvent : uint8_t {
     CalibrationComplete,
     CalibrationAborted,
     CoContraction, ///< the two-electrode grip-change gesture
+    ServoDriverReset, ///< the PCA9685 lost its configuration
 };
 
 class ModeMachine {
@@ -62,6 +63,16 @@ public:
 
     void dispatch(ButtonEvent event);
     void dispatch(SystemEvent event);
+
+    /// True after a servo-driver reset until the wearer releases the hand.
+    /// Meanwhile nothing else leaves SafeTorqueOff: not a fault clearing, not
+    /// a button gesture dispatched here, not a park command.
+    bool awaitingWearer() const { return awaitingWearer_; }
+
+    /// The wearer's explicit consent to energise again. Refused (false) when
+    /// nothing is waiting, the hand is not yet limp, a severe fault is active
+    /// or the boot self-test failed.
+    bool releaseByWearer();
 
     /// `active` is true whenever the user is producing usable myoelectric
     /// activity or the hand is not fully open.
@@ -88,6 +99,8 @@ private:
     /// subsequent setFaults(false, false) ticks or button presses cannot exit
     /// SafeTorqueOff without a fresh reset/boot.
     bool selfTestFailed_ = false;
+    /// Latched by a servo-driver reset; cleared by releaseByWearer() or reset().
+    bool awaitingWearer_ = false;
 
     float idleTimeout_ = 20.0f;
     float idleTimer_ = 0.0f;

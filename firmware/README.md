@@ -82,13 +82,16 @@ firmware/
 │       ├── calibration.*     guided electrode + bench servo calibration
 │       ├── hand_config.*     the persisted configuration struct
 │       ├── hand_state.h      inputs / outputs / telemetry
+│       ├── pca9685.h         recognising a reset servo driver
 │       └── hand_controller.* the policy that ties it together
 ├── test/
-│   ├── native/               95 host tests for the control core
+│   ├── native/               host tests for the control core
+│   ├── hal/                  servo-bus tests against a PCA9685 model
 │   └── hostcheck/stubs/      declaration-only Arduino API, for syntax checks
 ├── tools/
 │   ├── run_core_tests.py     build + run the core tests without PlatformIO
 │   ├── check_app_syntax.py   type-check src/ without the Xtensa toolchain
+│   ├── run_hal_tests.py      build + run the servo-bus tests
 │   └── jensen_monitor.py     live telemetry viewer / CSV logger
 └── docs/
     └── nextion_hmi.md        component IDs the display driver expects
@@ -125,6 +128,7 @@ the factory defaults, and a stored calibration overrides it.
 pio test -e native                        # with PlatformIO
 python tools/run_core_tests.py            # without it
 python tools/check_app_syntax.py          # type-check src/ with no toolchain
+python tools/run_hal_tests.py             # after `pio run`; needs g++ or clang++
 ```
 
 `run_core_tests.py` finds g++, clang++ or the MSVC Build Tools on its own.
@@ -132,6 +136,10 @@ python tools/check_app_syntax.py          # type-check src/ with no toolchain
 stubs — it catches signature and include errors in seconds, but only
 `pio run -e esp32dev` produces a flashable image or verifies the real library
 APIs.
+
+`run_hal_tests.py` compiles the real `servo_bus.cpp` and the real Adafruit
+PWM driver library against a model of the PCA9685 written from its data sheet.
+It checks the driver's behaviour against that model, not against a chip.
 
 CI runs that real build on every push, in the `target-build` job of
 `.github/workflows/ci.yml`. The job is **compile only**: it never uploads or
@@ -282,11 +290,35 @@ calibration is saved to NVS immediately.
 | click | next grasp pattern |
 | double click | hold / release (freeze the hand where it is) |
 | long press, 1.2 s | start electrode calibration |
-| very long press, 4 s | park the hand (limp) / wake it up |
+| very long press, 4 s | park the hand (limp) / wake it up, also after a servo-driver reset |
 
 Holding past 1.2 s starts calibration and buzzes; carrying on to 4 s escalates
 to parking, which aborts that calibration. The escalation is deliberate — a
 long hold on the only reachable button has to end with the hand going limp.
+
+### After a servo-driver reset
+
+If the PCA9685 loses its logic supply, even briefly, it comes back asleep and
+forgets its configuration. The firmware notices within about a quarter of a
+second, cuts torque, configures the chip again with every output off, and
+**leaves the hand limp until the wearer acts**:
+
+- a very long press on the button, started after the hand went limp, or
+- the park button on the touch display, at least 1 s after.
+
+While the ESP32 stays up, nothing else resumes it: not the fault clearing,
+not muscle activity, not `park off` on the console. It buzzes the warning
+cue, the LED shows SOS and the fault is `servo_reset` (while the bus is still
+unreachable the display names that first, as `servo_bus`). The chip keeps
+being checked while the hand waits, and `status` shows how many resets have
+happened since boot.
+
+**Limit:** the wait is held in RAM. If the ESP32 restarts as well (a deeper
+power dip on the shared 5 V rail, the watchdog, `reboot`), the hand starts
+normally and energises after its self-test without waiting for the wearer.
+
+An I2C outage in which the chip kept its configuration is not a reset: the
+hand is limp while the bus is away and resumes by itself when it returns.
 
 ### Co-contraction
 
@@ -357,7 +389,7 @@ pattern ...                configure sites and train direct grip patterns
 grip [next|prev|<name>]    select a grasp pattern
 grip enable <name> on|off  add or remove a pattern from the cycle
 hold [on|off]              freeze the hand
-park [on|off]              safe torque off / wake up
+park [on|off]              safe torque off / wake up (not after a driver reset)
 open | close               direct aperture command
 aperture <0..1>            direct aperture command
 wrist <0..1>               wrist rotator, 0.5 is neutral
@@ -441,11 +473,17 @@ The design assumptions worth knowing before relying on this:
 - **Severe faults park the hand**: critical battery, servo bus lost, no valid
   servo calibration. Warning faults (battery low, uncalibrated electrodes,
   sustained load) leave it working and tell the user.
+- **A reset servo driver leaves the hand limp until the wearer acts.** See
+  *After a servo-driver reset* above. Detection is by reading the chip's
+  registers back every 250 ms, so up to that long passes unnoticed, during
+  which a reset chip emits no pulses.
 - **A user-parked hand stays parked.** A fault appearing and clearing does not
   silently re-energise servos the wearer switched off.
 - **The hand cannot be re-energised into a severe fault.**
-- **No `delay()` anywhere.** A hand that stops reading its electrodes to
-  redraw a display stutters under the user's control.
+- **No `delay()` in the control path.** A hand that stops reading its
+  electrodes to redraw a display stutters under the user's control. The one
+  exception is reconfiguring a reset servo driver, where the library waits
+  about 15 ms; torque is already off by then.
 - **Watchdog.** A wedged control loop resets the ESP32, which brings the servo
   bus back up in safe torque off.
 - **Sustained load backs off rather than releasing.** After 25 s at high

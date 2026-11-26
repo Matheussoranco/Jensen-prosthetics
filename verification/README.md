@@ -42,6 +42,12 @@ produce an overall `PASS`:
   worst-case tick interval (`<= 10 ms`), watchdog reset, and actual torque loss
   on reset, active-low OE, I2C bus fault, and independent power cut remain
   `PENDING` until recorded on an authorized fixture.
+- **Servo-driver logic-supply interruption:** with the hand unloaded and
+  restrained, interrupting only the PCA9685 logic supply must leave the rail off
+  and the hand limp until the wearer acts. Also record the time from restored
+  supply to torque removal, behaviour on a shallow brownout that may not reset
+  the chip cleanly, and the control-tick interval during reconfiguration.
+  `PENDING`.
 
 ## Bench validation
 

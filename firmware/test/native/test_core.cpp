@@ -16,6 +16,7 @@
 #include "jensen/hand_controller.h"
 #include "jensen/modes.h"
 #include "jensen/pattern.h"
+#include "jensen/pca9685.h"
 #include "jensen/safety.h"
 #include "jensen/util.h"
 
@@ -1851,6 +1852,256 @@ TEST(controller_severe_fault_wins_over_concurrent_button_press_and_recovers) {
     rig.run(0.1f, 3.0f, 3.0f);
     CHECK_EQ(static_cast<int>(rig.hand.telemetry().mode), static_cast<int>(ControlMode::Active));
     CHECK_EQ(rig.hand.telemetry().faults & kFaultServoBus, 0);
+}
+
+// =============================================================================
+// Servo-driver reset (#8): the hand stays limp until the wearer acts.
+// =============================================================================
+
+namespace {
+
+/// Reports a driver reset on exactly one control tick, as the HAL does.
+void reportReset(Rig& rig, ButtonEvent sameTick = ButtonEvent::None) {
+    rig.in.servoDriverReset = true;
+    rig.press(sameTick);
+    rig.in.servoDriverReset = false;
+}
+
+void startRunning(Rig& rig) {
+    rig.reset(calibratedConfig());
+    rig.run(1.0f, 3.0f, 3.0f);
+}
+
+bool isLimp(const Rig& rig) {
+    if (rig.hand.outputs().servoRailEnabled || rig.hand.outputs().servoOutputEnabled) return false;
+    for (uint8_t i = 0; i < kDigitCount; ++i) {
+        if (rig.hand.outputs().pulseUs[i] != 0) return false;
+    }
+    return rig.hand.telemetry().mode == ControlMode::SafeTorqueOff;
+}
+
+int modeOf(const Rig& rig) { return static_cast<int>(rig.hand.telemetry().mode); }
+
+constexpr int kActive = static_cast<int>(ControlMode::Active);
+
+}  // namespace
+
+TEST(reset_makes_the_hand_limp_and_says_so) {
+    Rig rig;
+    startRunning(rig);
+    CHECK(rig.hand.outputs().servoRailEnabled);
+    reportReset(rig);
+    CHECK(isLimp(rig));
+    CHECK(rig.hand.telemetry().awaitingWearer);
+    CHECK(rig.hand.telemetry().faults & kFaultServoReset);
+    CHECK_EQ(rig.hand.telemetry().servoResetCount, 1u);
+    CHECK_EQ(static_cast<int>(rig.hand.outputs().haptic), static_cast<int>(HapticCue::Warning));
+}
+
+TEST(reset_is_not_cleared_by_time_muscles_or_any_other_command) {
+    Rig rig;
+    startRunning(rig);
+    reportReset(rig);
+
+    rig.run(30.0f, 900.0f, 3.0f);  // long, with strong flexor activity
+    CHECK(isLimp(rig));
+    rig.press(ButtonEvent::Click);
+    rig.press(ButtonEvent::DoubleClick);
+    rig.press(ButtonEvent::LongPress);
+    CHECK(isLimp(rig));
+    rig.hand.park(false);  // what the serial CLI sends, also after a bench calibration
+    rig.hand.setHold(true);
+    rig.hand.startEmgCalibration();
+    rig.hand.commandAperture(1.0f);
+    rig.run(1.0f, 3.0f, 3.0f);
+    CHECK(isLimp(rig));
+    CHECK(rig.hand.telemetry().awaitingWearer);
+}
+
+TEST(very_long_press_returns_the_hand_without_running_stale_commands) {
+    Rig rig;
+    startRunning(rig);
+    reportReset(rig);
+    rig.hand.commandAperture(1.0f);  // sent while limp: must not execute later
+    rig.run(5.0f, 3.0f, 3.0f);
+    rig.press(ButtonEvent::VeryLongPress);
+    // Straight to Active: no tick in Fault on the strength of the cleared latch.
+    CHECK_EQ(modeOf(rig), kActive);
+    CHECK_EQ(rig.hand.telemetry().faults & kFaultServoReset, 0);
+    rig.run(2.0f, 3.0f, 3.0f);
+    CHECK_EQ(modeOf(rig), kActive);
+    CHECK(rig.hand.outputs().servoRailEnabled);
+    CHECK_FALSE(rig.hand.telemetry().awaitingWearer);
+    CHECK_EQ(rig.hand.telemetry().faults & kFaultServoReset, 0);
+    CHECK_NEAR(rig.hand.telemetry().aperture, 0.0f, 1e-3);
+}
+
+TEST(wrist_command_sent_while_limp_is_dropped) {
+    Rig rig;
+    HandConfig config = calibratedConfig();
+    config.digits[index(Digit::Wrist)].enabled = true;
+    rig.reset(config);
+    rig.run(3.0f, 3.0f, 3.0f);
+    const uint16_t before = rig.hand.outputs().pulseUs[index(Digit::Wrist)];
+    CHECK(before > 0);
+
+    reportReset(rig);
+    rig.hand.setWristTarget(1.0f);
+    rig.run(5.0f, 3.0f, 3.0f);
+    rig.press(ButtonEvent::VeryLongPress);
+    rig.run(3.0f, 3.0f, 3.0f);
+    CHECK_EQ(modeOf(rig), kActive);
+    CHECK_EQ(rig.hand.outputs().pulseUs[index(Digit::Wrist)], before);
+
+    rig.hand.setWristTarget(1.0f);  // once resumed, commands work as before
+    rig.run(3.0f, 3.0f, 3.0f);
+    CHECK(rig.hand.outputs().pulseUs[index(Digit::Wrist)] != before);
+}
+
+TEST(press_already_under_way_when_the_reset_happens_does_not_wake_the_hand) {
+    // The wearer was holding the button to PARK and the 4 s gesture completes
+    // just after the reset.  It began before the hand went limp: not consent.
+    Rig rig;
+    startRunning(rig);
+    reportReset(rig);
+    rig.run(2.0f, 3.0f, 3.0f);
+    rig.press(ButtonEvent::VeryLongPress);
+    rig.run(0.5f, 3.0f, 3.0f);
+    CHECK(isLimp(rig));
+}
+
+TEST(press_on_the_same_tick_as_the_reset_does_not_wake_or_unpark) {
+    Rig rig;
+    startRunning(rig);
+    reportReset(rig, ButtonEvent::VeryLongPress);
+    rig.run(0.5f, 3.0f, 3.0f);
+    CHECK(isLimp(rig));
+    CHECK(rig.hand.telemetry().awaitingWearer);
+}
+
+TEST(reset_arriving_as_the_bus_recovers_does_not_resume_by_itself) {
+    // The main case: logic power is lost (bus fault), comes back (fault clears)
+    // and the reset is reported on that same tick.
+    Rig rig;
+    startRunning(rig);
+    rig.in.servoBusOk = false;
+    rig.run(0.5f, 3.0f, 3.0f);
+    CHECK(isLimp(rig));
+    rig.in.servoBusOk = true;
+    reportReset(rig);
+    CHECK(isLimp(rig));
+    rig.run(5.0f, 3.0f, 3.0f);
+    CHECK(isLimp(rig));
+    CHECK(rig.hand.telemetry().awaitingWearer);
+}
+
+TEST(wearer_cannot_resume_into_a_dead_bus) {
+    Rig rig;
+    startRunning(rig);
+    reportReset(rig);
+    rig.in.servoBusOk = false;
+    rig.run(5.0f, 3.0f, 3.0f);
+    rig.press(ButtonEvent::VeryLongPress);
+    CHECK_FALSE(rig.hand.acknowledgeServoReset());
+    CHECK(isLimp(rig));
+    rig.in.servoBusOk = true;
+    rig.run(1.0f, 3.0f, 3.0f);
+    CHECK(isLimp(rig));  // recovery alone is still not enough
+    rig.press(ButtonEvent::VeryLongPress);
+    rig.run(0.2f, 3.0f, 3.0f);
+    CHECK_EQ(modeOf(rig), kActive);
+}
+
+TEST(display_acknowledgement_has_its_own_short_guard) {
+    Rig rig;
+    startRunning(rig);
+    CHECK_FALSE(rig.hand.acknowledgeServoReset());  // nothing to acknowledge
+    reportReset(rig);
+    rig.run(0.3f, 3.0f, 3.0f);
+    CHECK_FALSE(rig.hand.acknowledgeServoReset());  // a tap already in flight
+    rig.run(1.0f, 3.0f, 3.0f);
+    CHECK(rig.hand.acknowledgeServoReset());
+    rig.run(0.2f, 3.0f, 3.0f);
+    CHECK_EQ(modeOf(rig), kActive);
+}
+
+TEST(second_reset_latches_again_and_is_counted) {
+    Rig rig;
+    startRunning(rig);
+    reportReset(rig);
+    rig.run(5.0f, 3.0f, 3.0f);
+    rig.press(ButtonEvent::VeryLongPress);
+    rig.run(0.5f, 3.0f, 3.0f);
+    CHECK_EQ(modeOf(rig), kActive);
+    reportReset(rig);
+    CHECK(isLimp(rig));
+    CHECK_EQ(rig.hand.telemetry().servoResetCount, 2u);
+
+    rig.run(5.0f, 3.0f, 3.0f);
+    reportReset(rig);  // a reset while already latched restarts the guard
+    rig.run(2.0f, 3.0f, 3.0f);
+    rig.press(ButtonEvent::VeryLongPress);
+    CHECK(isLimp(rig));
+}
+
+TEST(reset_during_self_test_ends_limp_not_active) {
+    Rig rig;
+    rig.reset(calibratedConfig());
+    rig.run(0.1f, 3.0f, 3.0f);
+    reportReset(rig);
+    rig.run(1.0f, 3.0f, 3.0f);
+    CHECK(isLimp(rig));
+    rig.run(4.0f, 3.0f, 3.0f);
+    rig.press(ButtonEvent::VeryLongPress);
+    rig.run(0.2f, 3.0f, 3.0f);
+    CHECK_EQ(modeOf(rig), kActive);
+}
+
+TEST(reset_during_calibration_aborts_it) {
+    Rig rig;
+    startRunning(rig);
+    rig.press(ButtonEvent::LongPress);
+    rig.run(0.5f, 3.0f, 3.0f);
+    CHECK_EQ(modeOf(rig), static_cast<int>(ControlMode::Calibrating));
+    reportReset(rig);
+    CHECK(isLimp(rig));
+    rig.run(0.1f, 3.0f, 3.0f);
+    CHECK(rig.hand.telemetry().calibrationStep == nullptr);
+}
+
+TEST(reset_does_not_override_a_failed_self_test) {
+    Rig rig;
+    HandConfig config = calibratedConfig();
+    config.magic = 0;
+    rig.reset(config);
+    rig.run(1.0f, 3.0f, 3.0f);
+    reportReset(rig);
+    rig.run(5.0f, 3.0f, 3.0f);
+    rig.press(ButtonEvent::VeryLongPress);
+    CHECK_FALSE(rig.hand.acknowledgeServoReset());
+    CHECK(isLimp(rig));
+}
+
+TEST(a_new_boot_clears_the_reset_latch) {
+    Rig rig;
+    startRunning(rig);
+    reportReset(rig);
+    startRunning(rig);  // begin() again
+    CHECK_FALSE(rig.hand.telemetry().awaitingWearer);
+    CHECK_EQ(rig.hand.telemetry().servoResetCount, 0u);
+    CHECK(rig.hand.outputs().servoRailEnabled);
+}
+
+TEST(pca9685_configuration_check_recognises_a_reset_chip) {
+    const uint8_t prescale = pca9685Prescale(27000000u, 50.0f);
+    CHECK_EQ(static_cast<int>(prescale), 131);  // same rounding as the Adafruit library
+    CHECK(pca9685Configured(0x20, prescale, prescale));  // awake, auto-increment
+    CHECK(pca9685Configured(0xA0, prescale, prescale));  // RESTART bit is irrelevant
+    CHECK_FALSE(pca9685Configured(0x11, 0x1E, prescale));      // datasheet power-on values
+    CHECK_FALSE(pca9685Configured(0x30, prescale, prescale));  // asleep
+    CHECK_FALSE(pca9685Configured(0x00, prescale, prescale));  // auto-increment lost
+    CHECK_FALSE(pca9685Configured(0x20, 0x1E, prescale));      // wrong frequency
+    CHECK_FALSE(pca9685Configured(0xFF, 0xFF, prescale));      // a floating bus
 }
 
 // =============================================================================

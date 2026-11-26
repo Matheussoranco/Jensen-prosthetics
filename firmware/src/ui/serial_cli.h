@@ -36,6 +36,10 @@ public:
     /// True while `cal digit` owns the servo bus.
     bool benchMode() const { return digitRunner_.active(); }
 
+    /// Ends bench calibration without saving, because the servo driver was
+    /// reset and the hand must stay limp. No effect outside bench mode.
+    void abortDigitCalibration();
+
     /// Called by the application when the controller has changed the stored
     /// configuration behind the CLI's back (after an electrode calibration),
     /// so the working copy does not overwrite it on the next `set`.

@@ -52,6 +52,10 @@ jobs:
         working-directory: firmware
         run: pio run -e esp32dev 2>&1 | tee build.log
         shell: bash
+      # Host test, here because the build has just fetched the pinned library
+      # that the real servo_bus.cpp is tested against.
+      - name: Servo-bus HAL tests against the pinned PWM library
+        run: python firmware/tools/run_hal_tests.py
       - name: Record toolchain, libraries and artifact digests
         working-directory: firmware
         shell: bash
