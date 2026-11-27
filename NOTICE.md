@@ -1,6 +1,6 @@
 # Third-Party Notices
 
-This project is released under CC BY-NC-SA 4.0 (see `LICENSE`). The notices
+The project's original work is licensed by component (see [LICENSE](LICENSE)). The notices
 below cover material in this repository that originates from other authors
 and is included with attribution, as required by their own licenses or as a
 courtesy.
@@ -31,10 +31,9 @@ community repositories) for mechanical fit-checking during design. They
 represent standard components, not original design work by this project,
 and are included purely as engineering references for anyone reproducing
 the assembly. Personal authoring metadata (contributor names, timestamps,
-local file paths) originally embedded in these files has been removed;
-no attribution is legally required for their inclusion, but credit goes
-to the respective GrabCAD community contributors who originally modeled
-them.
+local file paths) was removed from some files. Check the original sources and
+applicable terms before redistributing these models, including geometry
+embedded in the assembly export. Credit belongs to the original modelers.
 
 ## Firmware — relationship to exiii's HACKberry
 
@@ -50,8 +49,8 @@ here is an independent implementation written from scratch for different
 hardware — ESP32 + PCA9685 rather than ATmega32u4 with direct servo pins,
 seven actuated digits rather than three, closed-loop grip force rather than
 open loop, and a different architecture throughout — so no GPL-licensed code
-is copied, adapted, or linked, and no GPL obligation attaches to this
-repository.
+is copied, adapted, or linked. The project independently licenses its
+original firmware under GPL-3.0-only.
 
 Several comments in `firmware/lib/jensen_core/` and a section of
 `firmware/README.md` describe HACKberry's published control behaviour by way

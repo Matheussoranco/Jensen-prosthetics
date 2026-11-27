@@ -1,27 +1,18 @@
-Creative Commons Attribution-NonCommercial-ShareAlike 4.0 International (CC BY-NC-SA 4.0)
+# Jensen Hand licensing
 
-Copyright (c) 2025-2026 Matheus Pullig Soranço de Carvalho (Matheus Soranço)
-Contact: matheussoranco@gmail.com
+Copyright (c) 2025–2026 Matheus Pullig Soranço de Carvalho (Matheus Soranço).
 
-Summary (not a substitute for the legal code):
-- You may use, copy, modify, merge, publish, distribute and share this
-  software/material, with attribution, for NONCOMMERCIAL purposes only.
-- ShareAlike: if you remix, transform or build upon this material, you must
-  distribute your contributions under the same license (CC BY-NC-SA 4.0).
-- Commercial use (sale, paid SaaS/hosting, use in a commercial product,
-  training a commercial model for a third party, etc.) requires prior
-  written permission from the copyright holder.
+| Project material | License |
+| --- | --- |
+| Original mechanical design and manufacturing source, including the project's original geometry in STEP/STL exports | [CERN-OHL-S-2.0](hardware/LICENSE) |
+| Original firmware, test code and firmware tooling | [GPL-3.0-only](firmware/LICENSE) |
+| Original documentation and illustrations | [CC BY-SA 4.0](LICENSES/CC-BY-SA-4.0.txt) |
 
-Full legal text:
-https://creativecommons.org/licenses/by-nc-sa/4.0/legalcode
+Third-party content retains its original terms. This includes the files in
+`hardware/components/` and `third_party/`, third-party material in composite
+exports, and third-party images or references. See [NOTICE.md](NOTICE.md).
+The licensing of original geometry does not grant rights over third-party
+geometry in the same file.
 
-SPDX: CC-BY-NC-SA-4.0
-
-Note (hardware): CAD, renders and docs in hardware/, media/,
-prosthetic_hand_Jensen_1/ follow the same CC BY-NC-SA 4.0 unless a
-third_party/ file states otherwise. Firmware in firmware/ is also
-CC BY-NC-SA 4.0 (not MIT/Apache).
-
-Note (third party): files in third_party/ and the reference component models
-in hardware/components/ are not original work of this project and keep their
-own terms; see NOTICE.md.
+Previously published versions retain their original license terms. See the
+[previous license](LICENSES/CC-BY-NC-SA-4.0.previous.txt).

@@ -533,5 +533,6 @@ configuration struct knows or cares which hand it is driving.
 
 ## 11. License
 
-Same as the repository: **CC BY-NC-SA 4.0**. See `../LICENSE` and
-`../NOTICE.md`.
+Original firmware, tests and tooling are licensed under [GPL-3.0-only](LICENSE).
+Original firmware documentation uses [CC BY-SA 4.0](../LICENSES/CC-BY-SA-4.0.txt).
+See the [repository license map](../LICENSE) and [third-party notices](../NOTICE.md).

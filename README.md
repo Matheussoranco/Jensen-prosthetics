@@ -2,7 +2,7 @@
 
 **An open-source, servo-actuated, tendon-driven anthropomorphic prosthetic hand**
 
-[![License: CC BY-NC-SA 4.0](https://img.shields.io/badge/License-CC%20BY--NC--SA%204.0-lightgrey.svg)](LICENSE)
+[Licenses by component](LICENSE)
 
 > **Project status: design stage.** The Jensen Hand has **not been built**.
 > No physical prototype exists, and no bench, force, durability or clinical
@@ -27,7 +27,7 @@ PCA9685 PWM expander, an ESP32 microcontroller, FSR-based grip force
 sensing, and a Nextion touch display for status/configuration, powered from
 a 2S Li-ion pack through a buck-regulated supply. This repository releases
 the complete mechanical design (STEP/STL) of the hand and forearm shell
-under an open, non-commercial license, the reference component models used
+with component-specific licenses, the reference component models used
 to validate fit and clearance during development, and the ESP32 control
 firmware: myoelectric proportional control over a seven-pattern grasp
 library, closed-loop grip-force regulation with slip response, and a guided
@@ -223,7 +223,7 @@ velocity-integration approach is the one idea taken from exiii's HACKberry
 ```
 Jensen-prosthetics/
 ├── README.md
-├── LICENSE                 CC BY-NC-SA 4.0
+├── LICENSE                 license map by component
 ├── NOTICE.md                third-party attributions (read before reuse)
 ├── firmware/                ESP32 control stack — see firmware/README.md
 │   ├── platformio.ini
@@ -264,11 +264,9 @@ scrubbed.
 
 ## 8. License and Attribution
 
-This repository is licensed under **Creative Commons
-Attribution-NonCommercial-ShareAlike 4.0 International (CC BY-NC-SA 4.0)**
-— see [`LICENSE`](LICENSE). In short: you may use, share, and adapt this
-work for non-commercial purposes, with attribution, and any derivative must
-be shared under the same license.
+The Jensen Hand's original CAD and manufacturing files use [CERN-OHL-S-2.0](hardware/LICENSE). Original firmware uses [GPL-3.0-only](firmware/LICENSE), and original documentation uses [CC BY-SA 4.0](LICENSES/CC-BY-SA-4.0.txt). See the [license map](LICENSE) for scope and previous releases.
+
+The STEP assembly is a composite export. The hardware license applies to the project's original design, and any incorporated third-party geometry retains its own terms. Published CAD artifacts are STEP/STL exports. Native parametric source availability is described above.
 
 Full third-party attributions are in [`NOTICE.md`](NOTICE.md). In summary:
 
