@@ -84,3 +84,27 @@ VDD below 0.2 V. Library behaviour was read from Adafruit PWM Servo Driver 3.0.3
   with intact registers: unchanged, tracked in #9.
 - No end-to-end test of `main.cpp` wiring; it is covered by review and the
   target compile only.
+
+## Follow-up: author's re-check after the first revision (`115f8af`)
+
+PR #10 was merged at `9d35445`. The author then found two defects in that
+revision; `115f8af` fixes them in a follow-up pull request. The tables above
+describe `9d35445` and are left as written.
+
+| Defect in `9d35445` | Fix | Failing test first |
+|---|---|---|
+| A grip chosen from the console or display while limp was applied on resume; a host probe measured up to 1740 us pulse change (0 us after the fix) | `selectGrip`, `nextGrip`, `previousGrip` refused while waiting | `grip_changes_made_while_limp_are_dropped` |
+| A press begun before the reset was rejected only by summed `dt`, which can run ahead of real time (#11) | the switch must also have been seen up since the reset (`HandInputs::buttonDown`) | `button_held_since_before_the_reset_never_counts_however_long`, `a_release_seen_before_a_second_reset_does_not_carry_over` |
+
+Results on `115f8af`: core 127 run, 0 failed; HAL 13 run, 0 failed; 8
+application sources compiled with `-Werror`; verification tests passed; push CI
+run 45909883384 succeeded (host checks and ESP32 compile-only build).
+
+Randomized host checks, written for this re-check and not part of the
+repository: 3000 seeded runs (18 million control ticks, about 35 800 resets and
+13 900 releases) found no energised tick while waiting and no release without
+the stated consent; 4000 seeded driver runs (72 020 chip power cycles) found no
+unreported power cycle. Both detected a deliberately planted defect.
+
+Still untested: `main.cpp` wiring, including the one line that feeds
+`buttonDown`, and everything on hardware.

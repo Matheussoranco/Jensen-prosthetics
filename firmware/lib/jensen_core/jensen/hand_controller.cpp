@@ -25,9 +25,10 @@ constexpr float kRelaxRate = 0.6f;
 constexpr float kSelfTestSeconds = 0.4f;
 
 /// After a servo-driver reset, how long the hand must already have been limp
-/// for a gesture to count as consent.  The button's value is the length of the
-/// very long press itself, so the press must have started after the hand went
-/// limp: someone holding the button to park cannot wake it by accident.  A tap
+/// for a gesture to count as consent.  A button press must also have been
+/// preceded by the switch being seen up since the reset, which is what stops
+/// someone already holding it to park from waking the hand; the time is a
+/// second line, and summed dt is not exact enough to be the only one.  A tap
 /// on the display is instantaneous and only needs to outlast one in flight.
 constexpr float kButtonConsentSeconds =
     static_cast<float>(ButtonTiming{}.veryLongPressMillis) / 1000.0f;
@@ -69,6 +70,7 @@ void HandController::begin(const HandConfig& config) {
 
     selfTestTimer_ = 0.0f;
     awaitingSeconds_ = 0.0f;
+    releasedSinceReset_ = false;
     servoResetCount_ = 0;
     uptimeSeconds_ = 0.0f;
     loopCount_ = 0;
@@ -178,6 +180,7 @@ const HandOutputs& HandController::update(const HandInputs& inputs, float dt) {
     } else if (modes_.awaitingWearer()) {
         awaitingSeconds_ += dt;
     }
+    if (modes_.awaitingWearer() && !inputs.buttonDown) releasedSinceReset_ = true;
     updateFaults(inputs, dt);
 
     // Faults are evaluated before user input: a severe fault must win over a
@@ -200,7 +203,7 @@ const HandOutputs& HandController::update(const HandInputs& inputs, float dt) {
     // selection is this class's business.
     if (inputs.button == ButtonEvent::VeryLongPress && modes_.awaitingWearer() &&
         modes_.mode() == ControlMode::SafeTorqueOff) {
-        releaseAfterReset(kButtonConsentSeconds);
+        if (releasedSinceReset_) releaseAfterReset(kButtonConsentSeconds);
     } else if (inputs.button != ButtonEvent::None) {
         modes_.dispatch(inputs.button);
         if (inputs.button == ButtonEvent::Click && modes_.acceptsUserInput()) nextGrip();
@@ -545,6 +548,7 @@ void HandController::updateTelemetry(float dt) {
 // --- Commands ----------------------------------------------------------------
 
 void HandController::selectGrip(GripId grip) {
+    if (modes_.awaitingWearer()) return;  // would move the hand on resume
     if (grip == grips_.current() || !grips_.enabled(grip)) return;
     blendFrom_ = grips_.current();
     blendTimer_ = 0.0f;
@@ -553,6 +557,7 @@ void HandController::selectGrip(GripId grip) {
 }
 
 void HandController::nextGrip() {
+    if (modes_.awaitingWearer()) return;  // would move the hand on resume
     if (grips_.enabledCount() <= 1) return;
     blendFrom_ = grips_.current();
     blendTimer_ = 0.0f;
@@ -561,6 +566,7 @@ void HandController::nextGrip() {
 }
 
 void HandController::previousGrip() {
+    if (modes_.awaitingWearer()) return;  // would move the hand on resume
     if (grips_.enabledCount() <= 1) return;
     blendFrom_ = grips_.current();
     blendTimer_ = 0.0f;
@@ -583,6 +589,7 @@ void HandController::park(bool parked) {
 void HandController::onServoDriverReset() {
     modes_.dispatch(SystemEvent::ServoDriverReset);
     awaitingSeconds_ = 0.0f;
+    releasedSinceReset_ = false;
     ++servoResetCount_;
     apertureCommandActive_ = false;
     // Asked for explicitly: the usual warning cue only fires when the first
@@ -598,8 +605,9 @@ bool HandController::releaseAfterReset(float minLimpSeconds) {
     telemetry_.faults = safety_.faults();
     telemetry_.faultName = safety_.worstFaultName();
     telemetry_.awaitingWearer = false;
-    // Nothing queued while limp may move the hand now: it comes back open and
-    // follows the muscles from there.
+    // No motion command given while limp may act now (aperture here; wrist and
+    // grip changes are refused at source): the hand comes back open and follows
+    // the muscles from there.
     apertureCommandActive_ = false;
     commandedAperture_ = 0.0f;
     aperture_ = 0.0f;

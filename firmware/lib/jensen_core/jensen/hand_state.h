@@ -35,6 +35,9 @@ struct HandInputs {
     float batteryVolts = 0.0f;
 
     ButtonEvent button = ButtonEvent::None;
+    /// Debounced switch state. After a servo-driver reset a button press only
+    /// counts once the switch has been seen up.
+    bool buttonDown = false;
 
     /// False when the PCA9685 stopped acknowledging on I2C.
     bool servoBusOk = true;

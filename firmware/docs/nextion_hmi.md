@@ -61,7 +61,7 @@ ID* checkbox on the Touch Press Event.
 | 2 | previous grasp pattern |
 | 3 | toggle hold |
 | 4 | start electrode calibration |
-| 5 | toggle park (safe torque off) |
+| 5 | toggle park (safe torque off); after a servo-driver reset, resumes the hand |
 | 6 | open |
 | 7 | close |
 | 8 | request a full refresh |

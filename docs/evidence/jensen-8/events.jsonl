@@ -8,3 +8,9 @@
 {"ts":"2026-11-25T23:49:42Z","trace":"jensen-pca-recovery","actor":"claude-code","event":"ISSUE_FILED","ref":"Jensen-prosthetics#9","summary":"Two cases left unchanged, filed for an owner decision."}
 {"ts":"2026-11-25T23:49:56Z","trace":"jensen-pca-recovery","actor":"claude-code","event":"PR_OPENED","ref":"Jensen-prosthetics#10","summary":"Opened against main; two reviewers required."}
 {"ts":"2026-11-25T23:51:02Z","trace":"jensen-pca-recovery","actor":"github-actions","event":"VERIFY_CI","ref":"run 45724318183","summary":"Host checks and ESP32 compile-only build with HAL tests succeeded."}
+{"ts":"2026-11-26T12:32:36Z","trace":"jensen-pca-recovery","actor":"gemini","event":"REVIEW_VERDICT","ref":"Jensen-prosthetics#10 @ 9d35445","summary":"APPROVE, recorded as 1 of 2 required reviews."}
+{"ts":"2026-11-26T23:14:52Z","trace":"jensen-pca-recovery","actor":"owner-account","event":"MERGE","ref":"a8f364d","summary":"PR #10 merged at 9d35445."}
+{"ts":null,"trace":"jensen-pca-recovery","actor":"claude-code","event":"DEFECT_FOUND","ref":"9d35445","summary":"Grip selection while limp applied on resume."}
+{"ts":null,"trace":"jensen-pca-recovery","actor":"claude-code","event":"DEFECT_FOUND","ref":"9d35445","summary":"Pre-reset button press rejected only by summed dt."}
+{"ts":"2026-11-26T23:15:42Z","trace":"jensen-pca-recovery","actor":"claude-code","event":"COMMIT","ref":"115f8af","summary":"Fix for both defects."}
+{"ts":"2026-11-26T23:15:52Z","trace":"jensen-pca-recovery","actor":"claude-code","event":"ISSUE_FILED","ref":"Jensen-prosthetics#11","summary":"Pre-existing dt double counting in loop()."}

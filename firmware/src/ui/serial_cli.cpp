@@ -241,6 +241,9 @@ void SerialCli::handleLine(char* line) {
             hand_->selectGrip(grip);
         }
         out_->printf("grip %s\r\n", GripLibrary::name(hand_->grip()));
+        if (hand_->modes().awaitingWearer()) {
+            out_->println(F("grip unchanged: servo driver was reset; resume first"));
+        }
 
     } else if (equals(command, "pattern")) {
         if (count < 2 || equals(tokens[1], "status")) {
